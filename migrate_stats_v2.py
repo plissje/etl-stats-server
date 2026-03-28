@@ -5,10 +5,14 @@ import httpx
 import re
 import asyncio
 from collections import defaultdict
+from dotenv import load_dotenv
+
+# Load .env from root or current directory
+load_dotenv()
 
 # Configuration
-API_URL = "https://et-stats.local.maryan.io/api/submit-stats"
-API_TOKEN = "super-mega-secret-token"
+API_URL = os.getenv("API_URL", "https://et-stats.local.maryan.io/api/submit-stats")
+API_TOKEN = os.getenv("STATS_API_TOKEN")
 STATS_DIR = "refs/gamestats"
 
 headers = {

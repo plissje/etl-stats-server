@@ -7,7 +7,7 @@ services:
     volumes:
       - ./backend/data:/app/data
     environment:
-      - STATS_API_TOKEN=super-mega-secret-token
+      - STATS_API_TOKEN=${STATS_API_TOKEN}
       - DATABASE_URL=sqlite:////app/data/etl_stats.db
       - CORS_ORIGINS=*
     # Port 8000 is now only accessible via 'proxynet' (e.g., from NPM or the frontend)
