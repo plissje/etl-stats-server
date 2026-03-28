@@ -1,3 +1,5 @@
+import json
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,13 @@ router = APIRouter(prefix="/api/matches", tags=["matches"])
 
 
 def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
+    wb = None
+    if pms.weapon_breakdown_json:
+        try:
+            wb = json.loads(pms.weapon_breakdown_json)
+        except json.JSONDecodeError:
+            pass
+
     return PlayerMatchRowOut(
         player_guid=pl.guid,
         name_display=pl.display_name,
@@ -24,13 +33,78 @@ def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
         gibs=pms.gibs,
         revives=pms.revives,
         team_medpacks=pms.team_medpacks,
+        spam_kills=pms.spam_kills,
+        distance_travelled_meters=pms.distance_travelled_meters,
+        distance_travelled_spawn_avg=pms.distance_travelled_spawn_avg,
+        crouched_seconds=pms.crouched_seconds,
+        proned_seconds=pms.proned_seconds,
+        leaned_seconds=pms.leaned_seconds,
+        classes_played=json.loads(pms.classes_played_json) if pms.classes_played_json else [],
+        time_played_pct=pms.time_played_pct,
+        team_kills=pms.team_kills,
+        team_damage_given=pms.team_damage_given,
+        team_gibs=pms.team_gibs,
+        self_kills=pms.self_kills,
+        weapon_breakdown=wb,
     )
 
 
 @router.get("", response_model=list[MatchSummaryOut])
-def list_matches(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)) -> list[Match]:
-    q = db.query(Match).order_by(Match.created_at.desc()).offset(skip).limit(min(limit, 200))
-    return q.all()
+def list_matches(
+    skip: int = 0, 
+    limit: int = 50, 
+    mapname: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> list[MatchSummaryOut]:
+    q = db.query(Match)
+    if mapname:
+        q = q.filter(Match.mapname == mapname)
+    q = q.order_by(Match.round_start_unix.desc()).offset(skip).limit(min(limit, 200))
+    matches = q.all()
+    
+    out = []
+    for m in matches:
+        player_rows = (
+            db.query(PlayerMatchStats, Player)
+            .join(Player, Player.id == PlayerMatchStats.player_id)
+            .filter(PlayerMatchStats.match_id == m.id)
+            .filter(PlayerMatchStats.round_index == 0)
+            .all()
+        )
+        axis_names = []
+        allies_names = []
+        mvp_name = None
+        best_score = -1.0
+
+        for pms, p in player_rows:
+            if pms.team == 1:
+                axis_names.append(p.display_name)
+            elif pms.team == 2:
+                allies_names.append(p.display_name)
+            
+            # Team-agnostic MVP logic: highest score overall
+            score = pms.eff + (pms.xp / 10.0)
+            # Add a small bonus for winning team to break ties
+            if m.winner_team > 0 and pms.team == m.winner_team:
+                score += 0.01
+                
+            if score > best_score:
+                best_score = score
+                mvp_name = p.display_name
+
+        out.append(MatchSummaryOut(
+            id=m.id,
+            match_id=m.match_id,
+            mapname=m.mapname,
+            winner_team=m.winner_team,
+            round_start_unix=m.round_start_unix,
+            round_end_unix=m.round_end_unix,
+            axis_players=sorted(axis_names),
+            allies_players=sorted(allies_names),
+            mvp_name=m.mvp_player.display_name if m.mvp_player else mvp_name,
+            mvp_guid=m.mvp_player.guid if m.mvp_player else None,
+        ))
+    return out
 
 
 @router.get("/{match_db_id}", response_model=MatchDetailOut)
@@ -45,14 +119,61 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
         .all()
     )
     axis, allies = [], []
+    axis_round1, allies_round1 = [], []
+    axis_round2, allies_round2 = [], []
     for pms, pl in rows:
         r = _row(pms, pl)
-        if pms.team == 1:
-            axis.append(r)
-        else:
-            allies.append(r)
+        if pms.round_index == 0:
+            if pms.team == 1: axis.append(r)
+            else: allies.append(r)
+        elif pms.round_index == 1:
+            if pms.team == 1: axis_round1.append(r)
+            else: allies_round1.append(r)
+        elif pms.round_index == 2:
+            if pms.team == 1: axis_round2.append(r)
+            else: allies_round2.append(r)
+
     axis.sort(key=lambda x: (-x.kills, x.name_display.lower()))
     allies.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+    axis_round1.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+    allies_round1.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+    axis_round2.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+    allies_round2.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+
+    max_rivalry = None
+    max_count = 0
+    guid_to_name = {p.guid: p.display_name for _, p in rows}
+
+    for pms, pl in rows:
+        if not pms.nemesis_json:
+            continue
+        try:
+            nj = json.loads(pms.nemesis_json)
+            for victim_guid, count in nj.get("kills", {}).items():
+                if count > max_count:
+                    max_count = count
+                    max_rivalry = {
+                        "killer_guid": pl.guid,
+                        "killer_name": pl.display_name,
+                        "victim_guid": victim_guid,
+                        "victim_name": guid_to_name.get(victim_guid, victim_guid[:8]),
+                        "count": count
+                    }
+        except:
+            pass
+
+    # Team-agnostic MVP logic
+    best_score = -1.0
+    mvp = None
+    for pms, pl in rows:
+        if pms.round_index != 0: continue
+        score = pms.eff + (pms.xp / 10.0)
+        if m.winner_team > 0 and pms.team == m.winner_team:
+            score += 0.01
+        if score > best_score:
+            best_score = score
+            mvp = pl
+
     return MatchDetailOut(
         match=MatchSummaryOut(
             id=m.id,
@@ -61,7 +182,15 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             winner_team=m.winner_team,
             round_start_unix=m.round_start_unix,
             round_end_unix=m.round_end_unix,
+            axis_players=[r.name_display for r in axis],
+            allies_players=[r.name_display for r in allies],
+            mvp_name=mvp.display_name if mvp else None,
         ),
         axis=axis,
         allies=allies,
+        axis_round1=axis_round1,
+        allies_round1=allies_round1,
+        axis_round2=axis_round2,
+        allies_round2=allies_round2,
+        rivalry=max_rivalry
     )

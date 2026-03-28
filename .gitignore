@@ -17,3 +17,7 @@ htmlcov/
 .mypy_cache/
 *.egg-info/
 .DS_Store
+.agent/
+.services.pid
+backend/backend.log
+refs/gamestats/

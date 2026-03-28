@@ -1,0 +1,707 @@
+# ET:Legacy Objective Tracking Configuration
+#
+# NOTE: API credentials, file paths, feature flags, and collection
+# toggles are now configured at the top of luascripts/stats.lua.
+# This file only contains map-specific patterns and buildable configs.
+
+#####################
+# Common Buildables
+#####################
+[common_buildables.command_post.patterns]
+construct = [
+    ".*command post constructed.*charge speed increased.*",
+    ".*command post constructed.*"
+]
+destruct = [
+    ".*command post.*destroyed.*",
+    ".*destroyed.*command post.*",
+    ".*team has destroyed.*command post.*"
+]
+plant = [
+    "the.*command post",
+    "the.*cp"
+]
+
+[common_buildables.mg.patterns]
+construct = [
+    ".*mg constructed.*",
+    ".*guardtower constructed.*",
+    ".*team has built the.*mg.*",
+    ".*mg nest has been constructed.*",
+    ".*constructed the.*mg nest.*",
+    ".*constructed the guardtower.*"
+]
+destruct = [
+    ".*mg.*destroyed.*"
+]
+plant = [
+    "the mounted mg",
+    "the platform mg nest",
+    "the.*mg"
+]
+
+#####################
+# Map: Adlernest
+#####################
+[maps.adlernest.objectives.documents]
+steal_pattern = "allies stole \"the documents\""
+secured_pattern = "allied team has transmitted the documents"
+return_pattern = "axis returned the documents"
+
+[maps.adlernest.buildables.command_post]
+enabled = true
+
+[maps.adlernest.buildables.door_controls]
+destruct_pattern = "the doors are opening"
+plant_pattern = "the door controls"
+
+#####################
+# Map: Braundorf B4
+#####################
+[maps.braundorf_b4.buildables.command_post]
+enabled = true
+
+[maps.braundorf_b4.buildables.main_gate]
+destruct_pattern = "allies have destroyed the main gate"
+plant_pattern = "the main gate"
+
+[maps.braundorf_b4.buildables.side_door]
+destruct_pattern = "allies have destroyed the side door"
+plant_pattern = "the side door"
+
+[maps.braundorf_b4.buildables.side_gate]
+construct_pattern = "the side gate has been built"
+destruct_pattern = "the side gate has been destroyed"
+plant_pattern = "the side gate"
+
+[maps.braundorf_b4.buildables.bunker_controls]
+destruct_pattern = "allies have destroyed the bunker controls"
+plant_pattern = "the bunker controls"
+
+[maps.braundorf_b4.flags.allies_flag]
+flag_pattern = "Allies capture the factory district!"
+
+[maps.braundorf_b4.flags.axis_flag]
+flag_pattern = "Axis recapture the factory district!"
+
+#####################
+# Map: Bremen B3
+#####################
+[maps.bremen_b3.objectives.keycard]
+steal_pattern = "allies stole \"the keycard\""
+secured_pattern = "allies have captured the keycard"
+return_pattern = "axis returned the keycard"
+
+[maps.bremen_b3.buildables.command_post]
+enabled = true
+
+[maps.bremen_b3.buildables.main_gate]
+destruct_pattern = "the main gate"
+plant_pattern = "the main gate"
+
+[maps.bremen_b3.buildables.side_door]
+destruct_pattern = "the side door has been destroyed"
+plant_pattern = "the side door"
+
+[maps.bremen_b3.buildables.truck_barrier_1]
+construct_pattern = "truck barrier #1 has been constructed"
+destruct_pattern = "truck barrier #1 has been destroyed"
+plant_pattern = "truck barrier #1"
+
+[maps.bremen_b3.buildables.truck_barrier_2]
+construct_pattern = "truck barrier #2 has been constructed"
+destruct_pattern = "truck barrier #2 has been destroyed"
+plant_pattern = "truck barrier #2"
+
+[maps.bremen_b3.buildables.wooden_barrier]
+construct_pattern = "the wooden barrier has been constructed"
+plant_pattern = "the wooden barrier"
+
+[maps.bremen_b3.buildables.truck]
+construct_pattern = "the truck has been repaired!"
+
+[maps.bremen_b3.flags.allies_flag]
+flag_pattern = "The Allies have captured the forward bunker!"
+
+[maps.bremen_b3.flags.axis_flag]
+flag_pattern = "The Axis have reclaimed the forward bunker!"
+
+[maps.bremen_b3.escort.truck]
+escort_pattern = "Allied team has escaped"
+escort_coordinates = "-3143 -589 128"
+
+#####################
+# Map: Decay
+#####################
+[maps.decay.objectives.access_codes]
+steal_pattern = "allies stole \"the access codes\""
+secured_pattern = "the allies have transmitted the access codes"
+return_pattern = "axis returned the access codes"
+
+[maps.decay.objectives.gold]
+steal_pattern = "allies stole \"the gold\""
+secured_pattern = "the allies have secured a gold crate"
+return_pattern = "axis returned the gold"
+
+[maps.decay.buildables.command_post]
+enabled = true
+
+[maps.decay.buildables.fence]
+construct_pattern = "axis team have built the fence"
+destruct_pattern = "allied have destroyed the fence"
+plant_pattern = "the fence"
+
+[maps.decay.buildables.generator]
+destruct_pattern = "the allies have destroyed the generator"
+plant_pattern = "the generator"
+
+[maps.decay.flags.allies_flag]
+flag_pattern = "Allies have captured the Forward Flag!"
+
+[maps.decay.flags.axis_flag]
+flag_pattern = "Axis have captured the Forward Flag!"
+
+#####################
+# Map: Erdenberg T2
+#####################
+[maps.erdenberg_t2.buildables.command_post]
+enabled = true
+
+[maps.erdenberg_t2.buildables.main_entrance]
+destruct_pattern = "main gate has been destroyed"
+plant_pattern = "the main entrance"
+
+[maps.erdenberg_t2.buildables.east_flak88]
+destruct_pattern = "the east flak88 has been destroyed"
+plant_pattern = "the east flak88"
+
+[maps.erdenberg_t2.buildables.west_flak88]
+destruct_pattern = "the west flak88 has been destroyed"
+plant_pattern = "the west flak88"
+
+[maps.erdenberg_t2.flags.allies_flag]
+flag_pattern = "The Allies have captured the forward bunker!"
+
+[maps.erdenberg_t2.flags.axis_flag]
+flag_pattern = "The Axis have reclaimed the forward bunker!"
+
+#####################
+# Map: ET Brewdog
+#####################
+[maps.et_brewdog.objectives.quiz_answers]
+steal_pattern = "allies stole \"the quiz answers\""
+secured_pattern = "allies have transmitted the quiz answers"
+return_pattern = "axis returned the quiz answers"
+
+[maps.et_brewdog.buildables.storage_wall]
+destruct_pattern = "allies have breached the storage wall"
+plant_pattern = "the storage wall"
+
+[maps.et_brewdog.buildables.bunker_door]
+destruct_pattern = "allies have breached the bunker door"
+plant_pattern = "the bunker door"
+
+[maps.et_brewdog.flags.allies_flag]
+flag_pattern = "Allies have captured the Inner Compound!"
+
+[maps.et_brewdog.flags.axis_flag]
+flag_pattern = "Axis have reclaimed the Inner Compound!"
+
+#####################
+# Map: ET Operation
+#####################
+[maps.et_operation.objectives.documents]
+steal_pattern = "allies stole \"the documents\""
+secured_pattern = "allied team has transmitted the documents"
+return_pattern = "axis returned the documents"
+
+[maps.et_operation.buildables.command_post]
+enabled = true
+
+[maps.et_operation.buildables.side_wall]
+destruct_pattern = "side wall destroyed"
+plant_pattern = "the side wall"
+
+[maps.et_operation.buildables.side_door]
+construct_pattern = "the side fence has been constructed"
+destruct_pattern = "the side fence has been destroyed"
+plant_pattern = "the side door"
+
+[maps.et_operation.buildables.door_controls]
+destruct_pattern = "the doors are opening"
+plant_pattern = "the door controls"
+
+################################
+# Map: frostbite/etl_frostbite
+################################
+[maps.frostbite.objectives.supply_documents]
+steal_pattern = "allies stole \"the supply documents\""
+secured_pattern = "the allies have transmitted the supply documents"
+return_pattern = "axis returned the supply documents"
+
+[maps.frostbite.buildables.command_post]
+enabled = true
+
+[maps.frostbite.buildables.mg]
+enabled = true
+
+[maps.frostbite.buildables.main_door]
+destruct_pattern = "the main door"
+plant_pattern = "the main door"
+
+[maps.frostbite.buildables.service_door]
+destruct_pattern = "the service door"
+plant_pattern = "the service door"
+
+[maps.frostbite.buildables.storage_wall]
+destruct_pattern = "storage wall"
+plant_pattern = "the storage wall"
+
+#######################
+# Map: et_ice/etl_ice
+#######################
+[maps.ice.objectives.allied_documents]
+steal_pattern = "axis stole \".-documents\""
+secured_pattern = "transmited the secret war documents!"
+return_pattern = "allies returned allied documents"
+
+[maps.ice.buildables.command_post]
+enabled = true
+
+[maps.ice.buildables.mg]
+enabled = true
+
+[maps.ice.buildables.main_entrance]
+destruct_pattern = "the main entrance"
+plant_pattern = "the main entrance"
+
+[maps.ice.buildables.side_wall]
+destruct_pattern = "the side wall"
+plant_pattern = "the side wall"
+
+[maps.ice.flags.allies_flag]
+flag_pattern = "Allies have reclaimed the Forward Bunker!"
+
+[maps.ice.flags.axis_flag]
+flag_pattern = "Axis have captured the Forward Bunker!"
+
+#######################################
+# Map: etl_sp_delivery/sp_delivery_te
+#######################################
+[maps.sp_delivery.objectives.gold_crate]
+steal_pattern = "stole \"the axis gold\""
+secured_pattern = ".*gold crate"
+return_pattern = "axis returned the gold"
+
+[maps.sp_delivery.buildables.east_wall]
+destruct_pattern = "damaged the east wall"
+plant_pattern = "the east wall"
+
+[maps.sp_delivery.buildables.west_wall]
+destruct_pattern = "damaged the west wall"
+plant_pattern = "the west wall"
+
+[maps.sp_delivery.buildables.door_controls]
+construct_pattern = "door Controls have been constructed."
+
+# multi-line messages, just fit the last announcement...
+[maps.sp_delivery.buildables.door_controls_etl]
+construct_pattern = "the vault is now open!"
+
+[maps.sp_delivery.flags.allies_flag]
+flag_pattern = "Allies capture the Forward Bunker!"
+
+[maps.sp_delivery.flags.axis_flag]
+flag_pattern = "Axis reclaim the Forward Bunker!"
+
+#####################
+# Map: Karsiah TE2
+#####################
+[maps.karsiah_te2.objectives.north_documents]
+steal_pattern = "allies stole \"north documents\""
+secured_pattern = "allies have transmitted the north documents"
+return_pattern = "axis returned the north documents"
+
+[maps.karsiah_te2.objectives.south_documents]
+steal_pattern = "allies stole \"south documents\""
+secured_pattern = "allies have transmitted the south documents"
+return_pattern = "axis returned the south documents"
+
+[maps.karsiah_te2.buildables.old_city_door]
+destruct_pattern = "allies have destroyed the old city door"
+plant_pattern = "the old city door"
+
+[maps.karsiah_te2.flags.allies_flag]
+flag_pattern = "Allies capture the Old City!"
+
+[maps.karsiah_te2.flags.axis_flag]
+flag_pattern = "Axis reclaimed the Old City!"
+
+#####################
+# Map: Missile
+#####################
+[maps.missile.objectives.gate_power_supply]
+steal_pattern = "allies stole \"the gate power supply\""
+secured_pattern = "allies have transported the power supply!"
+return_pattern = "axis returned the gate power supply"
+
+[maps.missile.objectives.rocket_control]
+steal_pattern = "allies stole \"the rocket control\""
+secured_pattern = "allies have transported the rocket control!"
+return_pattern = "axis returned the rocket control"
+
+[maps.missile.buildables.command_post]
+enabled = true
+
+[maps.missile.buildables.door_control]
+destruct_pattern = "door control has been destroyed"
+plant_pattern = "the door control"
+
+[maps.missile.buildables.rocket_controls]
+construct_pattern = "the rocket controls have been dismantled"
+plant_pattern = "the rocket controls"
+
+[maps.missile.flags.allies_flag]
+flag_pattern = "Allies capture the Forward Bunker!"
+
+[maps.missile.flags.axis_flag]
+flag_pattern = "Axis reclaim the Forward Bunker!"
+
+#####################
+# Map: Radar
+#####################
+[maps.radar.objectives.east_radar_parts]
+steal_pattern = "allies stole \"the east radar parts\""
+secured_pattern = "allies have secured the east radar parts"
+return_pattern = "axis returned the east radar parts"
+
+[maps.radar.objectives.west_radar_parts]
+steal_pattern = "allies stole \"the west radar parts\""
+secured_pattern = "allies have secured the west radar parts"
+return_pattern = "axis returned the west radar parts"
+
+[maps.radar.buildables.command_post]
+enabled = true
+
+[maps.radar.buildables.mg]
+enabled = true
+
+[maps.radar.buildables.main_entrance]
+destruct_pattern = "main entrance has been destroyed"
+plant_pattern = "the main entrance"
+
+[maps.radar.buildables.side_entrance]
+destruct_pattern = "side entrance has been destroyed"
+plant_pattern = "the side entrance"
+
+[maps.radar.flags.allies_flag]
+flag_pattern = "Allies capture the Forward Bunker!"
+
+[maps.radar.flags.axis_flag]
+flag_pattern = "Axis reclaim the Forward Bunker!"
+
+######################
+# Map: Reactor_final
+######################
+[maps.reactor_final.objectives.explosives]
+steal_pattern = "stolen the box of explosives"
+secured_pattern = "loaded the explosives onto the truck"
+
+[maps.reactor_final.buildables.truck]
+construct_pattern = "truck has been repaired"
+destruct_pattern = "truck has rammed"
+
+[maps.reactor_final.buildables.west_security_door]
+destruct_pattern = "west security door"
+plant_pattern = "west security door"
+
+[maps.reactor_final.buildables.east_security_door]
+destruct_pattern = "east security door"
+plant_pattern = "east security door"
+
+[maps.reactor_final.buildables.coolant_tower_1]
+construct_pattern = "coolant controls repaired"
+destruct_pattern = "coolant tower 1 drained"
+
+[maps.reactor_final.buildables.coolant_tower_2]
+construct_pattern = "coolant tower 2 refilling"
+destruct_pattern = "coolant tower 2 drained"
+
+[maps.reactor_final.flags.allies_flag]
+flag_pattern = "Allies capture the Forward Bunker!"
+
+[maps.reactor_final.flags.axis_flag]
+flag_pattern = "Axis capture the Forward Bunker!"
+
+#####################
+# Map: Supply
+#####################
+[maps.supply.buildables.command_post]
+enabled = true
+
+[maps.supply.buildables.forward_bunker_gate]
+destruct_pattern = "the allies have breached the forward bunker gate"
+plant_pattern = "the forward bunker gate"
+
+[maps.supply.buildables.forward_spawn_rear_exit]
+destruct_pattern = "the allies have opened up the forward spawn rear exit"
+plant_pattern = "the forward spawn rear exit"
+
+[maps.supply.buildables.depot_gate]
+destruct_pattern = "the allies have breached the depot gate"
+plant_pattern = "the depot gate"
+
+[maps.supply.buildables.west_depot_wall]
+destruct_pattern = "the allies have breached the depot's west wall"
+plant_pattern = "the west depot wall"
+
+[maps.supply.buildables.east_depot_wall]
+destruct_pattern = "the allies have breached the depot's east wall"
+plant_pattern = "the east depot wall"
+
+[maps.supply.buildables.depot_fence]
+construct_pattern = "the depot fence has been constructed"
+destruct_pattern = "the depot fence has been destroyed"
+plant_pattern = "the depot fence"
+
+[maps.supply.buildables.crane_controls]
+construct_pattern = "the crane controls have been constructed"
+destruct_pattern = "the crane controls have been destroyed"
+plant_pattern = "the crane controls"
+
+[maps.supply.flags.allies_flag]
+flag_pattern = "The Allies have captured the forward bunker!"
+
+[maps.supply.flags.axis_flag]
+flag_pattern = "The Axis have captured the forward bunker!"
+
+[maps.supply.misc.crane_controls]
+misc_pattern = "The Allies have activated the crane!"
+misc_coordinates = "656 -1360 372"
+
+[maps.supply.escort.truck]
+escort_pattern = "The Allies have escaped with the Gold Crate!"
+escort_coordinates = "2720 1376 192"
+
+#####################
+# Map: SW Goldrush TE
+#####################
+[maps.sw_goldrush_te.objectives.gold_bars]
+steal_pattern = "allies stole \"the gold bars\""
+secured_pattern = "allied team is escaping with the gold"
+return_pattern = "axis returned the gold bars"
+
+[maps.sw_goldrush_te.buildables.command_post]
+enabled = true
+
+[maps.sw_goldrush_te.buildables.tank_barrier]
+construct_pattern = "tank barrier #1 has been constructed"
+destruct_pattern = "tank barrier #1 has been destroyed"
+plant_pattern = "tank barrier"
+
+[maps.sw_goldrush_te.buildables.truck_barrier]
+construct_pattern = "truck barrier #1 has been constructed"
+destruct_pattern = "truck barrier #1 has been destroyed"
+plant_pattern = "truck barrier"
+
+[maps.sw_goldrush_te.buildables.tank]
+construct_pattern = "the tank has been repaired"
+
+[maps.sw_goldrush_te.escort.tank]
+escort_pattern = "Allied team has destroyed the Bank Doors!"
+escort_coordinates = "1860 -80 -96"
+
+[maps.sw_goldrush_te.escort.truck]
+escort_pattern = "Allied team escaped with the Gold Crate!"
+escort_coordinates = "-3310 -1060 -31"
+
+#####################
+# Map: TE Escape2
+#####################
+[maps.te_escape2.objectives.unholy_grail]
+steal_pattern = "allies stole \"the unholy grail\""
+secured_pattern = "the allied team escaped with the unholy grail"
+return_pattern = "axis returned the unholy grail"
+
+[maps.te_escape2.buildables.main_gate]
+destruct_pattern = "allies have destroyed the main gate"
+plant_pattern = "the main gate!"
+
+[maps.te_escape2.buildables.tunnel_door]
+destruct_pattern = "allies have destroyed the tunnel door"
+plant_pattern = "the tunnel door"
+
+[maps.te_escape2.flags.allies_flag]
+flag_pattern = "Allies have captured the Forward Bunker!"
+
+[maps.te_escape2.flags.axis_flag]
+flag_pattern = "Axis have reclaimed the Forward Bunker!"
+
+
+#####################################################
+################ bobika_mapscripts ##################
+#####################################################
+
+#####################
+# Common Buildables
+#####################
+[bobika.common_buildables.command_post.patterns]
+construct = [
+    ".*command post constructed.*charge speed increased.*",
+    ".*command post constructed.*"
+]
+destruct = [
+    ".*command post.*destroyed.*",
+    ".*destroyed.*command post.*",
+    ".*team has destroyed.*command post.*"
+]
+plant = [
+    "the.*command post",
+    "the.*cp"
+]
+
+[bobika.common_buildables.mg.patterns]
+construct = [
+    ".*mg constructed.*",
+    ".*guardtower constructed.*",
+    ".*team has built the.*mg.*",
+    ".*mg nest has been constructed.*",
+    ".*constructed the.*mg nest.*",
+    ".*constructed the guardtower.*"
+]
+destruct = [
+    ".*mg.*destroyed.*"
+]
+plant = [
+    "the mounted mg",
+    "the platform mg nest",
+    "the.*mg"
+]
+
+#############################
+# Map: bobika.SW Goldrush TE
+#############################
+[bobika.maps.sw_goldrush_te.objectives.gold_bars]
+steal_pattern = "allies stole \"the gold bars\""
+secured_pattern = "allied team is escaping with the gold"
+return_pattern = "axis returned the gold bars"
+
+[bobika.maps.sw_goldrush_te.buildables.command_post]
+enabled = true
+
+[bobika.maps.sw_goldrush_te.buildables.tank_barrier]
+construct_pattern = "tank barrier has been constructed"
+destruct_pattern = "tank barrier has been destroyed"
+plant_pattern = "tank barrier"
+
+[bobika.maps.sw_goldrush_te.buildables.truck_barrier]
+construct_pattern = "truck barrier has been constructed"
+destruct_pattern = "truck barrier has been destroyed"
+plant_pattern = "truck barrier"
+
+[bobika.maps.sw_goldrush_te.buildables.tank]
+construct_pattern = "the tank has been repaired"
+
+[bobika.maps.sw_goldrush_te.escort.tank]
+escort_pattern = "Allied team has destroyed the Bank Doors!"
+escort_coordinates = "1860 -80 -96"
+
+[bobika.maps.sw_goldrush_te.escort.truck]
+escort_pattern = "Allied team escaped with the Gold Crate!"
+escort_coordinates = "-3310 -1060 -31"
+
+#####################
+# Map: bobika.Supply
+#####################
+[bobika.maps.supply.buildables.command_post]
+enabled = true
+
+[bobika.maps.supply.buildables.forward_bunker_gate]
+destruct_pattern = "allies have blown the bunker gate"
+plant_pattern = "the forward bunker gate"
+
+[bobika.maps.supply.buildables.forward_spawn_rear_exit]
+destruct_pattern = "allies have opened up flag exit"
+plant_pattern = "the forward spawn rear exit"
+
+[bobika.maps.supply.buildables.depot_gate]
+destruct_pattern = "allies have blown the depot gate"
+plant_pattern = "the depot gate"
+
+[bobika.maps.supply.buildables.west_depot_wall]
+destruct_pattern = "allies have blown the west wall"
+plant_pattern = "the west depot wall"
+
+[bobika.maps.supply.buildables.east_depot_wall]
+destruct_pattern = "allies have blown the east wall"
+plant_pattern = "the east depot wall"
+
+[bobika.maps.supply.buildables.depot_fence]
+construct_pattern = "depot fence has been constructed"
+destruct_pattern = "depot fence has been destroyed"
+plant_pattern = "the depot fence"
+
+[bobika.maps.supply.buildables.crane_controls]
+construct_pattern = "the crane controls have been constructed"
+destruct_pattern = "the crane controls have been destroyed"
+plant_pattern = "the crane controls"
+
+[bobika.maps.supply.flags.allies_flag]
+flag_pattern = "Allies have captured the FLAG!"
+
+[bobika.maps.supply.flags.axis_flag]
+flag_pattern = "Axis have captured the FLAG!"
+
+[bobika.maps.supply.misc.crane_controls]
+misc_pattern = "Allies have activated the crane!"
+misc_coordinates = "656 -1360 372"
+
+[bobika.maps.supply.escort.truck]
+escort_pattern = "Allies have escaped with the Gold Crate!"
+escort_coordinates = "2720 1376 192"
+
+########################
+# Map: bobika.Bremen B3
+########################
+[bobika.maps.bremen_b3.objectives.keycard]
+steal_pattern = "allies stole \"the keycard\""
+secured_pattern = "allies have captured the keycard"
+return_pattern = "axis returned the keycard"
+
+[bobika.maps.bremen_b3.buildables.command_post]
+enabled = true
+
+[bobika.maps.bremen_b3.buildables.main_gate]
+destruct_pattern = "main gate"
+plant_pattern = "main gate"
+
+[bobika.maps.bremen_b3.buildables.side_door]
+destruct_pattern = "side door has been destroyed"
+plant_pattern = "side door"
+
+[bobika.maps.bremen_b3.buildables.truck_barrier_1]
+construct_pattern = "keycard truck barrier has been constructed"
+destruct_pattern = "keycard truck barrier has been destroyed"
+plant_pattern = "truck barrier #1"
+
+[bobika.maps.bremen_b3.buildables.truck_barrier_2]
+construct_pattern = "ruins truck barrier has been constructed"
+destruct_pattern = "ruins truck barrier has been destroyed"
+plant_pattern = "truck barrier #2"
+
+[bobika.maps.bremen_b3.buildables.wooden_barrier]
+construct_pattern = "the wooden barrier has been constructed"
+plant_pattern = "the wooden barrier"
+
+[bobika.maps.bremen_b3.buildables.truck]
+construct_pattern = "truck has been repaired!"
+
+[bobika.maps.bremen_b3.flags.allies_flag]
+flag_pattern = "Allies have captured the FLAG!"
+
+[bobika.maps.bremen_b3.flags.axis_flag]
+flag_pattern = "Axis have reclaimed the FLAG!"
+
+[bobika.maps.bremen_b3.escort.truck]
+escort_pattern = "Allied team has escaped"
+escort_coordinates = "-3143 -589 128"

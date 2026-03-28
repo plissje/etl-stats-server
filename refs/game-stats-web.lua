@@ -1174,6 +1174,9 @@ local function validateAllPlayerNames()
 end
 
 local function fetchMatchIDFromAPI()
+    if cached_match_id then
+        return cached_match_id
+    end
     local url = string.format("%s/%s/%s", configuration.api_url_matchid, server_ip, server_port)
 
     local curl_cmd = string.format(

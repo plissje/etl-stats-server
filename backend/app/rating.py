@@ -1,60 +1,145 @@
-import math
 from dataclasses import dataclass
-
+from typing import Any
+from openskill.models import PlackettLuce
 
 @dataclass
-class RatingWeights:
-    kills: float = 12.0
-    damage: float = 0.02
-    revives: float = 8.0
-    deaths: float = -10.0
+class PlayerPerformance:
+    player_id: int
+    team: int
+    xp: float
+    eff: float
+    accuracy: float  # Headshot Ratio
+    weapon_acc: float # Hits / Shots
+    mu: float
+    sigma: float
 
+@dataclass
+class RatingResult:
+    player_id: int
+    new_mu: float
+    new_sigma: float
+    delta_rating: float  # Displayed delta, computed against (mu - 2*sigma)
 
-def _mean(xs: list[float]) -> float:
-    if not xs:
-        return 0.0
-    return sum(xs) / len(xs)
+def compute_display_rating(mu: float, sigma: float) -> float:
+    # Default openskill mu=25, sigma=8.333
+    # mu - 2*sigma = 25 - 16.666... = 8.333...
+    # To start at exactly 1500, we subtract this default conservative rating (8.333...)
+    # so that (25 - 16.666 - 8.333) * 100 + 1500 = 1500.
+    conservative_rating = mu - (2.0 * sigma)
+    default_conservative = 25.0 - (2.0 * 8.333333333333334)
+    return max(100.0, 1500.0 + (conservative_rating - default_conservative) * 100.0)
 
-
-def _std(xs: list[float], mu: float) -> float:
-    if len(xs) < 2:
-        return 1.0
-    v = sum((x - mu) ** 2 for x in xs) / (len(xs) - 1)
-    return math.sqrt(v) if v > 1e-9 else 1.0
-
-
-def _z(x: float, mu: float, sigma: float) -> float:
-    return (x - mu) / sigma
-
-
-def calculate_power_rating_deltas(
-    performances: list[dict[str, float]],
-    weights: RatingWeights | None = None,
-) -> list[float]:
+def calculate_openskill_ratings(
+    performances: list[PlayerPerformance],
+    winner_team: int
+) -> list[RatingResult]:
     """
-    performances: one dict per player with keys kills, damage_given, revives, deaths.
-    Returns delta rating per player (same order).
+    Computes ratings with an 80% weight on individual skill and 20% on team result.
+    Incorporates accuracy (HSR), weapon efficiency (hits/shots), and efficiency.
     """
-    w = weights or RatingWeights()
     if not performances:
         return []
 
-    kills = [float(p["kills"]) for p in performances]
-    dmg = [float(p["damage_given"]) for p in performances]
-    rev = [float(p["revives"]) for p in performances]
-    dth = [float(p["deaths"]) for p in performances]
+    # Filter out spectators (team 3 or 0)
+    playing = [p for p in performances if p.team in (1, 2)]
+    
+    if not playing:
+        return [RatingResult(p.player_id, p.mu, p.sigma, 0.0) for p in performances]
 
-    mk, sk = _mean(kills), _std(kills, _mean(kills))
-    md, sd = _mean(dmg), _std(dmg, _mean(dmg))
-    mr, sr = _mean(rev), _std(rev, _mean(rev))
-    mt, st = _mean(dth), _std(dth, _mean(dth))
+    # Performance Score = (Efficiency * 5.0) + (HSR * 5.0) + (WeaponAcc * 5.0) + (XP/50)
+    # Performance Score = (80% Efficiency) + (20% Normalized XP)
+    # 300 XP is considered a "perfect" match support score (100)
+    # 150 XP (~average) results in a 50/100 support score.
+    def get_score(p: PlayerPerformance) -> float:
+        eff_score = p.eff
+        xp_score = min(100.0, p.xp / 3.0)
+        return max(1.0, (eff_score * 0.8) + (xp_score * 0.2))
 
-    deltas: list[float] = []
-    for i in range(len(performances)):
-        z_k = _z(kills[i], mk, sk)
-        z_d = _z(dmg[i], md, sd)
-        z_r = _z(rev[i], mr, sr)
-        z_t = _z(dth[i], mt, st)
-        delta = w.kills * z_k + w.damage * z_d + w.revives * z_r + w.deaths * z_t
-        deltas.append(round(delta, 3))
-    return deltas
+    match_scores = [get_score(p) for p in playing]
+    match_avg_score = sum(match_scores) / len(match_scores) if match_scores else 0.0
+
+    model = PlackettLuce()
+    
+    team1_perfs = [p for p in playing if p.team == 1]
+    team2_perfs = [p for p in playing if p.team == 2]
+
+    if not team1_perfs or not team2_perfs:
+        return [RatingResult(p.player_id, p.mu, p.sigma, 0.0) for p in performances]
+
+    team1_ratings = [model.rating(mu=p.mu, sigma=p.sigma) for p in team1_perfs]
+    team2_ratings = [model.rating(mu=p.mu, sigma=p.sigma) for p in team2_perfs]
+
+    ranks = [1, 2] if winner_team == 1 else ([2, 1] if winner_team == 2 else [1, 1])
+    new_teams = model.rate([team1_ratings, team2_ratings], ranks=ranks)
+
+    def compute_modified_team(
+        old_perfs: list[PlayerPerformance],
+        old_ratings: list[Any],
+        new_ratings: list[Any],
+        team_avg_score: float
+    ) -> list[RatingResult]:
+        results = []
+        for p, old_r, new_r in zip(old_perfs, old_ratings, new_ratings):
+            mu_delta_team = new_r.mu - old_r.mu
+            
+            # Individual Performance Boost (Relative to TEAM average)
+            # Switch to RATIO-based comparison for sustainability
+            player_score = get_score(p)
+            
+            # Ratio: how much better/worse were they than the team average?
+            # 1.0 is neutral. 1.2 is 20% better.
+            ratio = player_score / max(1.0, team_avg_score)
+            
+            # Boost logic: (Ratio - 1.0) * Sensitivity
+            # A 20% better performance (+0.2 ratio) gives +0.2 * 1.5 = +0.3 mu boost
+            individual_performance_boost = (ratio - 1.0) * 1.5
+            
+            # SOFTEN PENALTY: Being below average is less punishing than being above average is rewarding
+            if individual_performance_boost < 0:
+                individual_performance_boost *= 0.5
+            
+            # 80/20 SPLIT
+            total_mu_change = (mu_delta_team * 0.2) + (individual_performance_boost * 0.8)
+            
+            # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.0 mu per game)
+            total_mu_change = max(-2.0, min(2.0, total_mu_change))
+
+            sigma_delta = new_r.sigma - old_r.sigma
+            final_mu = old_r.mu + total_mu_change
+            final_sigma = old_r.sigma + sigma_delta
+
+            results.append(
+                RatingResult(
+                    player_id=p.player_id,
+                    new_mu=final_mu,
+                    new_sigma=final_sigma,
+                    delta_rating=0.0 # Will align absolutely in ingest.py
+                )
+            )
+        return results
+
+    # Calculate average scores per team
+    t1_avg = sum(get_score(p) for p in team1_perfs) / len(team1_perfs) if team1_perfs else 0.0
+    t2_avg = sum(get_score(p) for p in team2_perfs) / len(team2_perfs) if team2_perfs else 0.0
+
+    res1 = compute_modified_team(team1_perfs, team1_ratings, new_teams[0], t1_avg)
+    res2 = compute_modified_team(team2_perfs, team2_ratings, new_teams[1], t2_avg)
+
+    # Combine back to original list format to preserve any spectators as 0 changes
+    results_map = {r.player_id: r for r in res1 + res2}
+    
+    final_results = []
+    for p in performances:
+        if p.player_id in results_map:
+            final_results.append(results_map[p.player_id])
+        else:
+            final_results.append(
+                RatingResult(
+                    player_id=p.player_id,
+                    new_mu=p.mu,
+                    new_sigma=p.sigma,
+                    delta_rating=0.0
+                )
+            )
+
+    return final_results
