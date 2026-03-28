@@ -43,9 +43,13 @@ def ingest_files():
     
     # Sort all files chronologically by filename timestamp to correctly identify round sequences
     def get_file_timestamp(f):
-        # f looks like ...gamestats-1774298608-...
+        # f looks like ...gamestats-1774298608-... OR stats-1774638824-...
         base = os.path.basename(f)
         if base.startswith("gamestats-"):
+            parts = base.split("-")
+            if len(parts) > 1:
+                return int(parts[1])
+        elif base.startswith("stats-"):
             parts = base.split("-")
             if len(parts) > 1:
                 return int(parts[1])

@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./backend/data:/app/data
+      - ./refs:/app/refs
     environment:
       - STATS_API_TOKEN=${STATS_API_TOKEN}
       - DATABASE_URL=sqlite:////app/data/etl_stats.db

@@ -7,9 +7,11 @@ class PlayerPerformance:
     player_id: int
     team: int
     xp: float
-    eff: float
-    accuracy: float  # Headshot Ratio
-    weapon_acc: float # Hits / Shots
+    kills: int
+    revives: int
+    ammo_packs: int
+    deaths: int
+    self_kills: int
     mu: float
     sigma: float
 
@@ -47,13 +49,21 @@ def calculate_openskill_ratings(
         return [RatingResult(p.player_id, p.mu, p.sigma, 0.0) for p in performances]
 
     # Performance Score = (Efficiency * 5.0) + (HSR * 5.0) + (WeaponAcc * 5.0) + (XP/50)
-    # Performance Score = (80% Efficiency) + (20% Normalized XP)
-    # 300 XP is considered a "perfect" match support score (100)
-    # 150 XP (~average) results in a 50/100 support score.
+    # Performance Score = (70% Efficiency) + (30% Support XP)
+    # Support XP is normalized to 100 max (300 XP = 100 score)
     def get_score(p: PlayerPerformance) -> float:
-        eff_score = p.eff
-        xp_score = min(100.0, p.xp / 3.0)
-        return max(1.0, (eff_score * 0.8) + (xp_score * 0.2))
+        # Unified Contribution Points:
+        # 1.0 per Kill/Revive
+        # 0.25 per Ammo Pack
+        # 0.10 per XP (Rewards Objectives, Repairs, etc.)
+        total_points = p.kills + p.revives + (p.ammo_packs * 0.25) + (p.xp * 0.10)
+        
+        # Unified Efficiency: Points / (Points + Deaths + SelfKills)
+        total_actions = total_points + p.deaths + p.self_kills
+        unified_eff = (total_points / max(1, total_actions)) * 100.0
+        
+        # FINAL SR SCORE: Directly use the Unified Efficiency
+        return max(1.0, unified_eff)
 
     match_scores = [get_score(p) for p in playing]
     match_avg_score = sum(match_scores) / len(match_scores) if match_scores else 0.0
@@ -83,22 +93,17 @@ def calculate_openskill_ratings(
             mu_delta_team = new_r.mu - old_r.mu
             
             # Individual Performance Boost (Relative to TEAM average)
-            # Switch to RATIO-based comparison for sustainability
             player_score = get_score(p)
             
             # Ratio: how much better/worse were they than the team average?
-            # 1.0 is neutral. 1.2 is 20% better.
             ratio = player_score / max(1.0, team_avg_score)
             
-            # Boost logic: (Ratio - 1.0) * Sensitivity
+            # Symmetric Boost logic: (Ratio - 1.0) * Sensitivity
             # A 20% better performance (+0.2 ratio) gives +0.2 * 1.5 = +0.3 mu boost
+            # A 20% worse performance (-0.2 ratio) gives -0.2 * 1.5 = -0.3 mu penalty
             individual_performance_boost = (ratio - 1.0) * 1.5
             
-            # SOFTEN PENALTY: Being below average is less punishing than being above average is rewarding
-            if individual_performance_boost < 0:
-                individual_performance_boost *= 0.5
-            
-            # 80/20 SPLIT
+            # 80/20 SPLIT BETWEEN TEAM RESULT AND INDIVIDUAL PERFORMANCE
             total_mu_change = (mu_delta_team * 0.2) + (individual_performance_boost * 0.8)
             
             # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.0 mu per game)

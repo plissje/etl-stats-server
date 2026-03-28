@@ -194,3 +194,24 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
         allies_round2=allies_round2,
         rivalry=max_rivalry
     )
+
+
+@router.delete("/{match_db_id}")
+def delete_match(match_db_id: int, db: Session = Depends(get_db)):
+    m = db.query(Match).filter(Match.id == match_db_id).one_or_none()
+    if not m:
+        raise HTTPException(404, "match not found")
+    
+    db.delete(m)
+    db.commit()
+    return {"status": "deleted", "id": match_db_id}
+
+
+@router.delete("/map/{mapname}")
+def delete_matches_by_map(mapname: str, db: Session = Depends(get_db)):
+    matches = db.query(Match).filter(Match.mapname == mapname).all()
+    count = len(matches)
+    for m in matches:
+        db.delete(m)
+    db.commit()
+    return {"status": "deleted", "count": count, "map": mapname}

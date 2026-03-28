@@ -33,15 +33,25 @@ def compute_event_metrics(
     damage_stats: list[dict[str, Any]] | None,
     team_by_guid: dict[str, int],
     gamelog: list[dict[str, Any]] | None = None,
+    aliases: dict[str, str] | None = None,
 ) -> EventMetrics:
     m = EventMetrics()
     pg = _norm_guid(player_guid)
+    # Ensure pg is the MASTER guid if it was passed as an alias
+    if aliases:
+        pg = aliases.get(pg, pg)
+
+    def _get_master(g: str) -> str:
+        g_norm = _norm_guid(g)
+        if aliases:
+            return aliases.get(g_norm, g_norm)
+        return g_norm
 
     # Process old format obituaries
     if obituaries:
         for ob in obituaries:
-            atk = _norm_guid(str(ob.get("attacker") or ""))
-            tgt = _norm_guid(str(ob.get("target") or ""))
+            atk = _get_master(str(ob.get("attacker") or ""))
+            tgt = _get_master(str(ob.get("target") or ""))
             if _same_player(tgt, pg):
                 m.deaths += 1
                 if atk and not _same_player(atk, tgt):
@@ -53,8 +63,8 @@ def compute_event_metrics(
     # Process old format damage_stats
     if damage_stats:
         for d in damage_stats:
-            atk = _norm_guid(str(d.get("attacker") or ""))
-            tgt = _norm_guid(str(d.get("target") or ""))
+            atk = _get_master(str(d.get("attacker") or ""))
+            tgt = _get_master(str(d.get("target") or ""))
             mod = d.get("meansOfDeath")
             try:
                 mod_i = int(mod) if mod is not None else -1
@@ -82,8 +92,8 @@ def compute_event_metrics(
                 continue
 
             if label in ("kill", "teamkill"):
-                atk = _norm_guid(str(ev.get("killer") or ""))
-                tgt = _norm_guid(str(ev.get("victim") or ""))
+                atk = _get_master(str(ev.get("killer") or ""))
+                tgt = _get_master(str(ev.get("victim") or ""))
                 if _same_player(tgt, pg):
                     m.deaths += 1
                     if label == "kill" and atk and not _same_player(atk, tgt):
@@ -94,13 +104,13 @@ def compute_event_metrics(
                         m.nemesis_kills[tgt] = m.nemesis_kills.get(tgt, 0) + 1
 
             elif label == "suicide":
-                p = _norm_guid(str(ev.get("player") or ""))
+                p = _get_master(str(ev.get("player") or ""))
                 if _same_player(p, pg):
                     m.deaths += 1
 
             elif label == "damage":
-                atk = _norm_guid(str(ev.get("killer") or ""))
-                tgt = _norm_guid(str(ev.get("victim") or ""))
+                atk = _get_master(str(ev.get("killer") or ""))
+                tgt = _get_master(str(ev.get("victim") or ""))
                 mod = ev.get("weapon")
                 try:
                     mod_i = int(mod) if mod is not None else -1

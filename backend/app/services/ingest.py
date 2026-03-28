@@ -71,10 +71,19 @@ def _eff_kdr(kills: int, deaths: int, self_kills: int = 0) -> tuple[float, float
     return eff, kdr
 
 
-def _load_aliases() -> dict[str, str]:
-    """Load GUID aliases from backend/app/aliases.json."""
-    # Assuming we are in backend/
-    mapping_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "aliases.json")
+def load_aliases() -> dict[str, str]:
+    """Load GUID aliases from the persistent data directory."""
+    # Prioritize the mapped data volume for persistence
+    mapping_path = "/app/data/aliases.json"
+    if not os.path.exists(mapping_path):
+        # Fallback for local development or first-run migration
+        data_dir = os.path.join(os.getcwd(), "data")
+        mapping_path = os.path.join(data_dir, "aliases.json")
+        
+        if not os.path.exists(mapping_path):
+            # Last resort: check next to app (local dev fallback)
+            mapping_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "aliases.json")
+            
     if not os.path.exists(mapping_path):
         return {}
     try:
@@ -101,7 +110,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     if not payloads:
         raise ValueError("no payloads provided")
 
-    aliases = _load_aliases()
+    aliases = load_aliases()
 
     def get_epoch(p):
         r = p.get("round_info", {})
@@ -178,6 +187,16 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     print(f"DEBUG: Ingesting payload for matchID: {match_id}")
 
     mapname = str(round_info_primary.get("mapname") or "")
+    
+    # Exclude certain maps from tracking
+    if mapname.lower() in ("mp_sillyctf", "mp_valhalla"):
+        print(f"DEBUG: Skipping matchID {match_id} because map '{mapname}' is in exclusion list.")
+        # We need to return something that won't break the caller. 
+        # Returning a dummy match or raising SkipMatch might be better.
+        # For now, let's assume the caller handles Match objects.
+        # A more robust way would be to return None and check in the router.
+        return None
+
     # Winner determination logic
     winner_team = 0
     if len(payloads) == 2:
@@ -216,7 +235,6 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     if not existing:
         # 2. Heuristic: Check for a recent match on the same map (within 30 mins)
         # This allows Round 2 to merge even if it was assigned a different Match ID.
-        from datetime import datetime
         now_unix = int(datetime.utcnow().timestamp())
         recent_threshold = now_unix - (30 * 60)
         
@@ -237,7 +255,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     processing_round_indices = []
     for i, p in enumerate(payloads):
         r_info = p.get("round_info") or {}
-        ri = int(r_info.get("round_index") or (i + 1))
+        ri = int(r_info.get("round_index") or r_info.get("round") or (i + 1))
         processing_round_indices.append(ri)
 
     if existing:
@@ -428,6 +446,9 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         gamelog = body.get("gamelog")
 
         team_by_guid: dict[str, int] = {}
+        first_team_by_guid: dict[str, int] = {} # Fix: Track the team they started the match with
+        
+        # ... later in the final total stats loop we'll use this
         for g, pdata in player_stats.items():
             try:
                 team_by_guid[g.strip().upper()] = int(pdata.get("team") or 0)
@@ -472,12 +493,13 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             # but fall back to the generic map if needed.
             if guid not in total_stats_by_guid:
                 total_stats_by_guid[guid] = TotalStat(name_raw, display, team)
-            else:
-                ts = total_stats_by_guid[guid]
-                # Update match team if the player is on a valid side (1=Axis, 2=Allies)
-                # in the current round. The final round's team will be the one stored.
                 if team in (1, 2):
-                    ts.team = team
+                    first_team_by_guid[guid] = team
+            else:
+                # Record the first team they joined in this match (usually Round 1)
+                # to keep the "Total Score" view consistent after side-swaps.
+                if guid not in first_team_by_guid and team in (1, 2):
+                    first_team_by_guid[guid] = team
             
             ts = total_stats_by_guid[guid]
 
@@ -486,7 +508,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 ws_raw = []
             unpacked = unpack_weapon_stats(ws_raw)
 
-            em = compute_event_metrics(guid, obituaries, damage_stats, team_by_guid, gamelog)
+            em = compute_event_metrics(guid, obituaries, damage_stats, team_by_guid, gamelog, aliases=aliases)
             kills, deaths = em.kills, em.deaths
 
             dg = dr = tdg = tdr = gibs = sk = tk = tg = 0
@@ -688,7 +710,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             match_id=match_row.id,
             player_id=player.id,
             round_index=0,
-            team=ts.team,
+            team=first_team_by_guid.get(guid, ts.team), # Use their Round 1 team for the Total view
             kills=ts.kills,
             deaths=ts.deaths,
             kdr=kdr,
@@ -743,9 +765,11 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 player_id=player.id,
                 team=ts.team,
                 xp=float(ts.xp),
-                eff=float(eff),
-                accuracy=float(hs_acc or 0.0),
-                weapon_acc=float(weapon_acc),
+                kills=ts.kills,
+                revives=revives_from_unpacked(ts.weapons), # Use the helper already in the file
+                ammo_packs=ts.team_medpacks,
+                deaths=ts.deaths,
+                self_kills=ts.self_kills,
                 mu=mu,
                 sigma=sigma,
             )
@@ -782,7 +806,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     for res in rating_results:
         perf = next((p for p in performances if p.player_id == res.player_id), None)
         if perf:
-            score = perf.eff + (perf.xp / 10.0)
+            # MVP Score matches the new get_score logic roughly
+            tactical_eff = ((perf.kills + perf.revives) / max(1, perf.kills + perf.revives + perf.deaths + perf.self_kills)) * 100.0
+            score = (tactical_eff * 0.7) + (min(100.0, perf.xp / 3.0) * 0.3)
+            
             if winner_team > 0 and perf.team == winner_team:
                 score += 0.01
             
@@ -794,3 +821,102 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     db.commit()
     db.refresh(match_row)
     return match_row
+
+
+def recalculate_all_ratings(db: Session):
+    """
+    Clears all rating history and resets all player ratings to baseline,
+    then iterates through all matches chronologically to rebuild the SR state.
+    """
+    # 1. Reset all player ratings to baseline (mu=25.0, sigma=8.333)
+    db.query(PlayerGatherRating).update({
+        "current_rating": 1500.0,
+        "mu": 25.0,
+        "sigma": 8.333
+    })
+    
+    # 2. Delete all rating history
+    db.query(PlayerGatherRatingHistory).delete()
+    db.flush()
+
+    # 3. Load all matches in chronological order
+    matches = db.query(Match).order_by(Match.round_start_unix.asc()).all()
+
+    for m in matches:
+        # Get total performance rows (round_index=0) for this match
+        stats_rows = db.query(PlayerMatchStats).filter(
+            PlayerMatchStats.match_id == m.id,
+            PlayerMatchStats.round_index == 0
+        ).all()
+
+        if not stats_rows:
+            continue
+
+        performances = []
+        for row in stats_rows:
+            gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == row.player_id).one_or_none()
+            if not gr:
+                gr = PlayerGatherRating(player_id=row.player_id, current_rating=1500.0, mu=25.0, sigma=8.333)
+                db.add(gr)
+                db.flush()
+            
+            # Weapon accuracy logic (extracted from ingest_match_payloads)
+            core_weapon_slots = {2, 3, 4, 5, 6, 7, 22, 23, 24, 25, 26}
+            total_hits = 0
+            total_shots = 0
+            if row.weapon_breakdown_json:
+                try:
+                    wb = json.loads(row.weapon_breakdown_json)
+                    # Support both list (unpacked) and dict (aggregated) formats
+                    if isinstance(wb, list):
+                        for w in wb:
+                            if w.get("slot") in core_weapon_slots:
+                                total_hits += w.get("hits", 0)
+                                total_shots += w.get("shots", 0)
+                    elif isinstance(wb, dict):
+                        for slot_s, w in wb.items():
+                            if int(slot_s) in core_weapon_slots:
+                                total_hits += w.get("hits", 0)
+                                total_shots += w.get("shots", 0)
+                except:
+                    pass
+            weapon_acc = (total_hits / total_shots * 100.0) if total_shots > 0 else 0.0
+
+            performances.append(PlayerPerformance(
+                player_id=row.player_id,
+                team=row.team,
+                xp=float(row.xp),
+                kills=row.kills,
+                revives=row.revives,
+                ammo_packs=row.team_medpacks,
+                deaths=row.deaths,
+                self_kills=row.self_kills,
+                mu=gr.mu,
+                sigma=gr.sigma
+            ))
+
+        rating_results = calculate_openskill_ratings(performances, m.winner_team)
+
+        for res in rating_results:
+            gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == res.player_id).one()
+            
+            new_rating = compute_display_rating(res.new_mu, res.new_sigma)
+            delta = new_rating - gr.current_rating
+            
+            gr.mu = res.new_mu
+            gr.sigma = res.new_sigma
+            gr.current_rating = new_rating
+
+            hist = PlayerGatherRatingHistory(
+                player_id=res.player_id,
+                match_id=m.id,
+                rating=new_rating,
+                delta=delta,
+                mu=res.new_mu,
+                sigma=res.new_sigma,
+            )
+            db.add(hist)
+        
+        db.flush()
+    
+    db.commit()
