@@ -62,7 +62,22 @@ def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depen
                 except Exception as e:
                     print(f"Error parsing raw_payload for {m.match_id}: {e}")
             else:
-                print(f"Warning: No source files or raw_payload found for match_id {m.match_id} (DB ID: {m.id})")
+                # No source data to re-ingest, but we can still recalculate unified_eff
+                # directly from the columns already stored in player_match_stats.
+                print(f"Info: No source for match {m.match_id} (DB ID: {m.id}) — recalculating UE from existing columns.")
+                rows = db.query(PlayerMatchStats).filter(PlayerMatchStats.match_id == m.id).all()
+                for row in rows:
+                    kills = row.kills or 0
+                    revives = row.revives or 0
+                    medkits = (row.medkits or 0) + (row.team_medpacks or 0)
+                    xp = row.xp or 0
+                    deaths = row.deaths or 0
+                    sk = row.self_kills or 0
+                    points = kills + revives + (medkits * 0.25) + (xp * 0.10)
+                    total_actions = points + deaths + sk
+                    row.unified_eff = round((points / total_actions) * 100.0, 1) if total_actions > 0 else 0.0
+                db.flush()
+                reprocessed_count += 1
                 continue
         else:
             # Sort files by round if possible
