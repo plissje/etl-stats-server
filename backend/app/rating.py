@@ -103,8 +103,8 @@ def calculate_openskill_ratings(
             # A 20% worse performance (-0.2 ratio) gives -0.2 * 1.5 = -0.3 mu penalty
             individual_performance_boost = (ratio - 1.0) * 1.5
             
-            # 80/20 SPLIT BETWEEN TEAM RESULT AND INDIVIDUAL PERFORMANCE
-            total_mu_change = (mu_delta_team * 0.2) + (individual_performance_boost * 0.8)
+            # 60/40 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
+            total_mu_change = (mu_delta_team * 0.4) + (individual_performance_boost * 0.6)
             
             # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.0 mu per game)
             total_mu_change = max(-2.0, min(2.0, total_mu_change))

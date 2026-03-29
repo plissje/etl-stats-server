@@ -3,6 +3,7 @@ import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-do
 import { OverviewTab, MatchesTab, LeaderboardsTab, PlayersTab, BalancingTab } from './pages/Dashboard'
 import { MatchDetail } from './pages/MatchDetail'
 import { PlayerProfile } from './pages/PlayerProfile'
+import { HowItWorks } from './pages/HowItWorks'
 
 function RouteLink({ to, label }: { to: string, label: string }) {
   const loc = useLocation()
@@ -39,6 +40,7 @@ function Layout({ children }: { children: ReactNode }) {
               { path: '/leaderboards', label: 'Rankings' },
               { path: '/search', label: 'Player Search' },
               { path: '/balancing', label: 'Team Balancer' },
+              { path: '/how-it-works', label: 'How it Works' },
             ].map(t => (
               <RouteLink key={t.path} to={t.path} label={t.label} />
             ))}
@@ -60,6 +62,7 @@ export default function App() {
           <Route path="/leaderboards" element={<LeaderboardsTab />} />
           <Route path="/search" element={<PlayersTab />} />
           <Route path="/balancing" element={<BalancingTab />} />
+          <Route path="/how-it-works" element={<HowItWorks />} />
           <Route path="/match/:id" element={<MatchDetail />} />
           <Route path="/player/:guid" element={<PlayerProfile />} />
         </Routes>
