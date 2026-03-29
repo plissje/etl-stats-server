@@ -17,14 +17,17 @@ export type PlayerRow = {
   name_raw: string | null
   team: number
   eff: number
+  unified_eff: number
   kdr: number
   kills: number
   deaths: number
+  xp: number
   damage_given: number
   damage_received: number
   headshots: number
   gibs: number
   revives: number
+  medkits: number
   team_medpacks: number
   spam_kills: number
 
@@ -111,6 +114,7 @@ export type PlayerProfile = {
     revives: number
     avg_eff: number
   }
+  class_stats?: Record<string, number>
 }
 
 export async function fetchPlayer(guid: string): Promise<PlayerProfile> {

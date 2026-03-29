@@ -33,6 +33,7 @@ def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depen
     
     reprocessed_count = 0
     for m in matches:
+        payloads = []
         files = []
         for root in potential_roots:
             # Check root/refs/gamestats, root/refs, root/gamestats
@@ -53,27 +54,34 @@ def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depen
                 break
             
         if not files:
-            print(f"Warning: No source files found for match_id {m.match_id} (DB ID: {m.id})")
-            continue
-        
-        # Sort files by round if possible
-        def get_round(f):
-            try:
-                name = os.path.basename(f)
-                if "round-" in name:
-                    return int(name.split("round-")[1].split(".")[0])
-            except:
-                pass
-            return 0
-        files.sort(key=get_round)
-        
-        payloads = []
-        for f in files:
-            try:
-                with open(f, "r") as fp:
-                    payloads.append(json.load(fp))
-            except Exception as e:
-                print(f"Error reading {f}: {e}")
+            if m.raw_payload:
+                try:
+                    payloads = json.loads(m.raw_payload)
+                    if not isinstance(payloads, list):
+                        payloads = [payloads]
+                except Exception as e:
+                    print(f"Error parsing raw_payload for {m.match_id}: {e}")
+            else:
+                print(f"Warning: No source files or raw_payload found for match_id {m.match_id} (DB ID: {m.id})")
+                continue
+        else:
+            # Sort files by round if possible
+            def get_round(f):
+                try:
+                    name = os.path.basename(f)
+                    if "round-" in name:
+                        return int(name.split("round-")[1].split(".")[0])
+                except:
+                    pass
+                return 0
+            files.sort(key=get_round)
+            
+            for f in files:
+                try:
+                    with open(f, "r") as fp:
+                        payloads.append(json.load(fp))
+                except Exception as e:
+                    print(f"Error reading {f}: {e}")
         
         if payloads:
             print(f"Reprocessing match {m.match_id} with {len(payloads)} rounds...")

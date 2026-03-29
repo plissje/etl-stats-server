@@ -71,6 +71,15 @@ def _eff_kdr(kills: int, deaths: int, self_kills: int = 0) -> tuple[float, float
     return eff, kdr
 
 
+def _calculate_unified_eff(kills: int, revives: int, ammo: int, xp: int, deaths: int, self_kills: int) -> float:
+    # Unified Points formula from rating.py
+    points = kills + revives + (ammo * 0.25) + (xp * 0.10)
+    total_actions = points + deaths + self_kills
+    if total_actions <= 0:
+        return 0.0
+    return round((points / total_actions) * 100.0, 1)
+
+
 def load_aliases() -> dict[str, str]:
     """Load GUID aliases from the persistent data directory."""
     # Prioritize the mapped data volume for persistence
@@ -179,14 +188,16 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # Now payloads are "fixed", proceed with ingestion
     primary = payloads[0]
     round_info_primary = primary.get("round_info") or {}
+    # Alignment: Oksii moved global fields to 'metadata'
+    metadata_primary = primary.get("metadata") or {}
 
-    match_id = str(round_info_primary.get("matchID") or primary.get("matchID") or "")
+    match_id = str(metadata_primary.get("matchID") or round_info_primary.get("matchID") or primary.get("matchID") or "")
     if not match_id:
         raise ValueError("missing matchID")
 
     print(f"DEBUG: Ingesting payload for matchID: {match_id}")
 
-    mapname = str(round_info_primary.get("mapname") or "")
+    mapname = str(metadata_primary.get("mapname") or round_info_primary.get("mapname") or "")
     
     # Exclude certain maps from tracking
     if mapname.lower() in ("mp_sillyctf", "mp_valhalla"):
@@ -292,7 +303,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             winner_team=winner_team,
             round_start_unix=rs,
             round_end_unix=re,
-            raw_payload=None, # Raw payload storage logic omitted for simplicity or could be updated
+            raw_payload=json.dumps(payloads),
         )
         db.add(match_row)
         db.flush()
@@ -317,7 +328,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             self.time_played_pcts = []
             self.xp = 0
             self.revives = 0
-            self.team_medpacks = 0
+            self.medkits = 0
+            self.team_medpacks = 0 # Ammo
             self.spam_kills = 0
             self.headshot_hits = 0
             self.shots_recorded = 0
@@ -365,6 +377,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         ts.team_gibs += row.team_gibs
         ts.xp += row.xp
         ts.revives += row.revives
+        ts.medkits += row.medkits
         ts.team_medpacks += row.team_medpacks
         ts.spam_kills += row.spam_kills
         ts.spawn_count += row.spawn_count
@@ -509,7 +522,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             unpacked = unpack_weapon_stats(ws_raw)
 
             em = compute_event_metrics(guid, obituaries, damage_stats, team_by_guid, gamelog, aliases=aliases)
-            kills, deaths = em.kills, em.deaths
+            
+            # ALIGNMENT: Prefer event-based stats if available, fall back to pdata for legacy
+            kills = em.kills if em.kills > 0 else int(pdata.get("kills") or 0)
+            deaths = em.deaths if em.deaths > 0 else int(pdata.get("deaths") or 0)
 
             dg = dr = tdg = tdr = gibs = sk = tk = tg = 0
             tpct = 0.0
@@ -545,7 +561,24 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     mw["headshots"] = max(mw["headshots"], w.headshots)
 
             eff, kdr = _eff_kdr(kills, deaths, sk)
-            revives = revives_from_unpacked(unpacked)
+            revives = em.revives
+            medkits = em.team_medpacks
+            ammo_packs = em.team_ammopacks
+
+            # Fallbacks for legacy scripts where events might be missing
+            if revives == 0 and not gamelog:
+                revives = revives_from_unpacked(unpacked) or int(pdata.get("revives") or 0)
+            if medkits == 0 and not gamelog:
+                medkits = int(pdata.get("medkits") or 0)
+            if ammo_packs == 0 and not gamelog:
+                ammo_packs = int(pdata.get("team_medpacks") or 0) # Historical label
+            
+            # Unified Efficiency calculation for the round row (v4 logic)
+            # (kills + revives + ammo*0.25 + meds*0.25? No, user says both are trackable, 
+            # let's use the same point value for both support packs)
+            u_points = kills + revives + (ammo_packs * 0.25) + (medkits * 0.25) + (xp * 0.10)
+            u_actions = u_points + deaths + sk
+            u_eff = round((u_points / max(1, u_actions)) * 100.0, 1)
 
             spam_kills = 0
             if unpacked:
@@ -563,6 +596,22 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             lean = int(stances.get("in_lean") or 0)
             
             classes_played = pdata.get("class_switches") or []
+            # Robust fallback: if class_switches is missing (new modular Lua scripts), 
+            # harvest from the gamelog events if they exist.
+            if not classes_played and gamelog:
+                for ev in gamelog:
+                    # Lua sends 'player' as the GUID key in gamelog events
+                    ev_player = str(ev.get("player") or "").strip().upper()
+                    if ev_player == guid:
+                        label = ev.get("label")
+                        if label in ("spawn", "class_change"):
+                            cname = ev.get("class")
+                            if cname:
+                                classes_played.append({
+                                    "toClass": cname,
+                                    "timestamp": int(ev.get("unixtime") or ev.get("leveltime") or 0)
+                                })
+            
             classes_json = json.dumps(classes_played) if classes_played else None
 
             # Modular v2.x metrics
@@ -622,6 +671,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 deaths=deaths, # round-specific
                 kdr=kdr_round,
                 eff=eff_round,
+                unified_eff=u_eff,
                 damage_given=r_dg,
                 damage_received=r_dr,
                 team_damage_given=r_tdg,
@@ -634,7 +684,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 time_played_pct=tpct - (p_unpacked.time_played_pct if p_unpacked else 0.0),
                 xp=r_xp,
                 revives=r_revives,
-                team_medpacks=em.team_medpacks,
+                medkits=medkits,
+                team_medpacks=ammo_packs,
                 spam_kills=spam_kills, # round-specific
                 distance_travelled_meters=r_dist_m,
                 distance_travelled_spawn_avg=dist_sa, # session-avg typically
@@ -667,7 +718,6 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ts.team_kills = max(ts.team_kills, tk)
             ts.team_gibs = max(ts.team_gibs, tg)
             ts.xp = max(ts.xp, xp)
-            ts.revives = max(ts.revives, revives)
             ts.spawn_count = max(ts.spawn_count, spawn_count)
             ts.speed_ups_avg = max(ts.speed_ups_avg, ups_avg)
             ts.speed_ups_peak = max(ts.speed_ups_peak, ups_peak)
@@ -676,19 +726,32 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ts.crouched_seconds = max(ts.crouched_seconds, crouch)
             ts.proned_seconds = max(ts.proned_seconds, prone)
             ts.leaned_seconds = max(ts.leaned_seconds, lean)
+            
+            # Add to total (Event-based or Delta-based Stats)
+            if gamelog:
+                ts.kills += em.kills
+                ts.deaths += em.deaths
+                ts.revives += em.revives
+                ts.medkits += em.team_medpacks
+                ts.team_medpacks += em.team_ammopacks # Now Ammo
+                ts.headshots += em.headshot_hits
+                ts.headshot_hits += em.headshot_hits
+                ts.shots_recorded += em.shots_recorded
+            else:
+                # Legacy fallback: use max for session totals if we don't have a gamelog to aggregate
+                ts.kills = max(ts.kills, kills)
+                ts.deaths = max(ts.deaths, deaths)
+                ts.revives = max(ts.revives, revives)
+                ts.medkits = max(ts.medkits, medkits)
+                ts.team_medpacks = max(ts.team_medpacks, ammo_packs)
+                ts.headshots = max(ts.headshots, em.headshot_hits)
+                ts.headshot_hits = max(ts.headshot_hits, em.headshot_hits)
+                ts.shots_recorded = max(ts.shots_recorded, em.shots_recorded)
 
-            # Add to total (Event-based Stats - using sum)
-            ts.kills += kills
-            ts.deaths += deaths
-            ts.headshots += em.headshot_hits
-            ts.team_medpacks += em.team_medpacks
             ts.spam_kills += spam_kills
             if classes_played:
                 ts.classes_played_lists.extend(classes_played)
             ts.time_played_pcts.append(tpct)
-            # HS accuracy tracking
-            ts.headshot_hits += em.headshot_hits
-            ts.shots_recorded += em.shots_recorded
 
     # 3. RE-DETERMINE WINNER based on all rounds
     # (Optional: implement full Stopwatch logic across all rounds in DB if needed)
@@ -715,6 +778,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             deaths=ts.deaths,
             kdr=kdr,
             eff=eff,
+            unified_eff=_calculate_unified_eff(ts.kills, ts.revives, ts.team_medpacks + ts.medkits, ts.xp, ts.deaths, ts.self_kills),
             damage_given=ts.damage_given,
             damage_received=ts.damage_received,
             team_damage_given=ts.team_damage_given,
@@ -727,6 +791,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             time_played_pct=avg_time,
             xp=ts.xp,
             revives=ts.revives,
+            medkits=ts.medkits,
             team_medpacks=ts.team_medpacks,
             spam_kills=ts.spam_kills,
             distance_travelled_meters=ts.distance_travelled_meters,
@@ -766,7 +831,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 team=ts.team,
                 xp=float(ts.xp),
                 kills=ts.kills,
-                revives=revives_from_unpacked(ts.weapons), # Use the helper already in the file
+                revives=float(ts.revives),
                 ammo_packs=ts.team_medpacks,
                 deaths=ts.deaths,
                 self_kills=ts.self_kills,

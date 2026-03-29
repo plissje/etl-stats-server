@@ -72,6 +72,7 @@ class PlayerMatchStats(Base):
     deaths: Mapped[int] = mapped_column(Integer, default=0)
     kdr: Mapped[float] = mapped_column(Float, default=0.0)
     eff: Mapped[float] = mapped_column(Float, default=0.0)
+    unified_eff: Mapped[float] = mapped_column(Float, default=0.0)
 
     damage_given: Mapped[int] = mapped_column(Integer, default=0)
     damage_received: Mapped[int] = mapped_column(Integer, default=0)
@@ -86,6 +87,7 @@ class PlayerMatchStats(Base):
     xp: Mapped[int] = mapped_column(Integer, default=0)
 
     revives: Mapped[int] = mapped_column(Integer, default=0)
+    medkits: Mapped[int] = mapped_column(Integer, default=0)
     team_medpacks: Mapped[int] = mapped_column(Integer, default=0)
     spam_kills: Mapped[int] = mapped_column(Integer, default=0)
 

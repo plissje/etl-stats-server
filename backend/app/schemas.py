@@ -31,6 +31,7 @@ class PlayerMatchRowOut(BaseModel):
     name_raw: str | None
     team: int
     eff: float
+    unified_eff: float
     kdr: float
     kills: int
     deaths: int
@@ -39,8 +40,10 @@ class PlayerMatchRowOut(BaseModel):
     headshots: int
     gibs: int
     revives: int
+    medkits: int
     team_medpacks: int
     spam_kills: int
+    xp: int
 
     distance_travelled_meters: float
     distance_travelled_spawn_avg: float
@@ -90,3 +93,4 @@ class PlayerProfileOut(BaseModel):
     total_matches: int = 0
     match_history: list[dict[str, Any]] = []
     lifetime_stats: dict[str, Any] | None = None
+    class_stats: dict[str, int] = {}

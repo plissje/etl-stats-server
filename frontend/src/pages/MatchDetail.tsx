@@ -5,14 +5,14 @@ import { QuakeName } from '../components/QuakeName'
 
 type SortKey = keyof Pick<PlayerRow,
   'eff' | 'kdr' | 'kills' | 'deaths' | 'damage_given' | 'damage_received' |
-  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'team_medpacks' | 'time_played_pct'
+  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'medkits' | 'team_medpacks' | 'time_played_pct' | 'unified_eff'
 >
 type SortDir = 'asc' | 'desc'
 
-function AwardCard({ emoji, title, value, subtext }: { emoji: string, title: string, value: React.ReactNode, subtext?: string }) {
+function AwardCard({ emoji, title, value, subtext, empty }: { emoji: string, title: string, value: React.ReactNode, subtext?: string, empty?: boolean }) {
   return (
-    <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-4 flex items-start gap-4 shadow-sm hover:border-violet-500/20 transition-colors">
-      <div className="text-2xl mt-0.5 select-none">{emoji}</div>
+    <div className={`bg-zinc-900/40 border ${empty ? 'border-zinc-800/20 opacity-40' : 'border-zinc-800/80 shadow-sm hover:border-violet-500/20'} rounded-xl p-4 flex items-start gap-4 transition-colors`}>
+      <div className={`text-2xl mt-0.5 select-none ${empty ? 'grayscale' : ''}`}>{emoji}</div>
       <div className="overflow-hidden">
         <p className="text-sm font-semibold text-zinc-400 mb-1">{title}</p>
         <p className="text-lg font-bold text-zinc-100 truncate">{value}</p>
@@ -80,6 +80,10 @@ function PlayerMatchDetails({ row }: { row: PlayerRow }) {
 
         <div className="space-y-2">
           <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-1">Profile</div>
+          <div className="flex justify-between items-center bg-zinc-800/20 px-3 py-1.5 rounded-md border border-zinc-700/20">
+            <span>XP:</span> 
+            <span className="text-violet-300 font-mono font-bold">{Math.round(row.xp || 0)}</span>
+          </div>
           {uniqueClasses.length > 0 && (
             <div className="flex flex-col gap-2 bg-zinc-800/20 px-3 py-2 rounded-md border border-zinc-700/20 min-h-[44px] justify-center">
               <span className="text-zinc-500 text-[9px] font-bold uppercase tracking-wider opacity-60">Classes Summary</span>
@@ -99,18 +103,21 @@ function PlayerMatchDetails({ row }: { row: PlayerRow }) {
 }
 
 const COLS: { key: SortKey; label: string; title?: string; defaultDesc?: boolean }[] = [
-  { key: 'eff', label: 'EFF', title: 'Efficiency: kills / (kills + deaths + selfKills) × 100', defaultDesc: true },
-  { key: 'kdr', label: 'KDR', defaultDesc: true },
-  { key: 'kills', label: 'KILLS', defaultDesc: true },
-  { key: 'deaths', label: 'DEATHS', defaultDesc: false },
-  { key: 'damage_given', label: 'DMG G', defaultDesc: true },
-  { key: 'damage_received', label: 'DMG R', defaultDesc: false },
-  { key: 'headshots', label: 'HS', defaultDesc: true },
-  { key: 'gibs', label: 'GIBS', defaultDesc: true },
-  { key: 'self_kills', label: 'SK', defaultDesc: false },
-  { key: 'team_kills', label: 'TK', defaultDesc: false },
-  { key: 'revives', label: 'REV', defaultDesc: true },
-  { key: 'time_played_pct', label: 'TIME', title: '% of the match time the player was connected', defaultDesc: true },
+  { key: 'eff', label: 'EFF', title: 'Standard Efficiency: kills / (kills + deaths + selfKills) × 100', defaultDesc: true },
+  { key: 'kdr', label: 'KDR', title: 'Kill/Death Ratio', defaultDesc: true },
+  { key: 'kills', label: 'KILLS', title: 'Total kills delivered', defaultDesc: true },
+  { key: 'deaths', label: 'DEATHS', title: 'Total deaths (including Self Kills)', defaultDesc: false },
+  { key: 'damage_given', label: 'DMG G', title: 'Total damage given to enemies', defaultDesc: true },
+  { key: 'damage_received', label: 'DMG R', title: 'Total damage received from enemies', defaultDesc: false },
+  { key: 'headshots', label: 'HS', title: 'Total headshot kills', defaultDesc: true },
+  { key: 'gibs', label: 'GIBS', title: 'Total bodies gibbed / finished off', defaultDesc: true },
+  { key: 'self_kills', label: 'SK', title: 'Total self-kills (explosives or falling)', defaultDesc: false },
+  { key: 'team_kills', label: 'TK', title: 'Total team-kills', defaultDesc: false },
+  { key: 'revives', label: 'REV', title: 'Total players revived (1.0 Contribution Points each)', defaultDesc: true },
+  { key: 'medkits', label: 'MK', title: 'Total medkits dispensed (0.25 Contribution Points each)', defaultDesc: true },
+  { key: 'team_medpacks', label: 'AMMO', title: 'Total ammo packs dropped (0.25 Contribution Points each)', defaultDesc: true },
+  { key: 'time_played_pct', label: 'TIME', title: 'Percentage of the match duration the player was connected', defaultDesc: true },
+  { key: 'unified_eff', label: 'UE', title: 'Unified Efficiency (v4): contribution points / (points + deaths + selfKills) × 100', defaultDesc: true },
 ]
 
 function colColor(key: SortKey, val: number, row?: PlayerRow): string {
@@ -132,7 +139,7 @@ function colColor(key: SortKey, val: number, row?: PlayerRow): string {
 
 function formatVal(key: SortKey, val: number): string {
   if (key === 'eff') return Math.round(val).toString()
-  if (key === 'kdr') return val.toFixed(2)
+  if (key === 'unified_eff' || key === 'kdr') return val % 1 === 0 ? val.toString() : val.toFixed(1)
   if (key === 'time_played_pct') return val ? Math.round(val) + '%' : '-'
   return val.toString()
 }
@@ -167,7 +174,7 @@ function ScoreTable({
 
   const totals: Record<SortKey, number> = {} as any
   for (const col of COLS) {
-    if (col.key === 'eff' || col.key === 'kdr' || col.key === 'time_played_pct') {
+    if (col.key === 'eff' || col.key === 'unified_eff' || col.key === 'kdr' || col.key === 'time_played_pct') {
       totals[col.key] = rows.length ? rows.reduce((s, r) => s + (r[col.key] as number), 0) / rows.length : 0
     } else {
       totals[col.key] = rows.reduce((s, r) => s + ((r[col.key] || 0) as number), 0)
@@ -187,7 +194,9 @@ function ScoreTable({
                   key={col.key}
                   title={col.title}
                   onClick={() => onSort(col.key)}
-                  className={`px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors ${
+                  className={`py-3 text-right text-xs font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors ${
+                    col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
+                  } ${
                     sortKey === col.key ? 'text-violet-400' : 'text-zinc-500 hover:text-zinc-300'
                   }`}
                 >
@@ -207,9 +216,9 @@ function ScoreTable({
             {sorted.map(r => (
               <Fragment key={r.player_guid}>
                 <tr className="hover:bg-zinc-800/40 transition-colors group cursor-pointer" onClick={() => toggleRow(r.player_guid)}>
-                  <td className="px-4 py-2 font-medium flex items-center gap-2">
+                  <td className="px-4 py-2 font-medium flex items-center gap-4">
                     <span className="text-zinc-600 group-hover:text-zinc-400 transition-colors select-none w-3 inline-block">
-                      {expandedRows.has(r.player_guid) ? '▼' : '▶'}
+                      {expandedRows.has(r.player_guid) ? '▼\uFE0E' : '▶\uFE0E'}
                     </span>
                     <Link
                       to={`/player/${encodeURIComponent(r.player_guid)}`}
@@ -224,7 +233,9 @@ function ScoreTable({
                   {COLS.map(col => {
                     const val = (r[col.key] || 0) as number
                     return (
-                      <td key={col.key} className={`px-3 py-2 text-right font-mono text-sm ${colColor(col.key, val, r)}`}>
+                      <td key={col.key} className={`py-2 text-right font-mono text-sm ${
+                        col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
+                      } ${colColor(col.key, val, r)}`}>
                         {formatVal(col.key, val)}
                       </td>
                     )
@@ -243,7 +254,9 @@ function ScoreTable({
               <tr className="bg-zinc-900/80 font-semibold border-t border-zinc-700">
                 <td className="px-4 py-3 text-zinc-300 text-sm">Total</td>
                 {COLS.map(col => (
-                  <td key={col.key} className="px-3 py-3 text-right font-mono text-zinc-300 text-sm">
+                  <td key={col.key} className={`py-3 text-right font-mono text-zinc-300 text-sm ${
+                    col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
+                  }`}>
                     {formatVal(col.key, totals[col.key])}
                   </td>
                 ))}
@@ -260,7 +273,7 @@ export function MatchDetail() {
   const { id } = useParams<{ id: string }>()
   const [data, setData] = useState<MatchDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [sortKey, setSortKey] = useState<SortKey>('kdr')
+  const [sortKey, setSortKey] = useState<SortKey>('unified_eff')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [activeTab, setActiveTab] = useState<'total' | 'round1' | 'round2'>('total')
 
@@ -353,15 +366,49 @@ export function MatchDetail() {
       {allPlayers.length > 0 && (
         <div className="bg-zinc-800/40 rounded-xl p-4 md:p-6 border border-white/5 space-y-4 mb-8">
           <h2 className="text-xl font-bold text-white mb-4 shadow-sm">Match Awards</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            <AwardCard emoji="🏆" title="MVP" value={<QuakeName name={match.mvp_name} />} subtext="Highest overall contribution" />
-            <AwardCard emoji="⚔️" title="Top Killer" value={<QuakeName name={topFragger?.name_raw || topFragger?.name_display} />} subtext={`${topFragger?.kills || 0} kills`} />
-            <AwardCard emoji="💉" title="Top Medic" value={<QuakeName name={topMedic?.name_raw || topMedic?.name_display} />} subtext={`${topMedic?.revives || 0} revives`} />
-            <AwardCard emoji="💥" title="Spammer" value={<QuakeName name={topSpammer?.name_raw || topSpammer?.name_display} />} subtext={`${topSpammer?.spam_kills || 0} spamkills`} />
-            <AwardCard emoji="🎧" title="iPod" value={<QuakeName name={topIpod?.name_raw || topIpod?.name_display} />} subtext={`${topIpod?.deaths || 0} deaths (Fewest)`} />
-            {topTK && (topTK.team_kills || 0) > 3 && (
-              <AwardCard emoji="🔥" title="FF Warning" value={<QuakeName name={topTK.name_raw || topTK.name_display} />} subtext={`${topTK.team_kills} Team Kills`} />
-            )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <AwardCard 
+              emoji="🏆" 
+              title="MVP" 
+              value={match.mvp_name ? <QuakeName name={match.mvp_name} /> : "N/A"} 
+              subtext="Highest overall contribution" 
+              empty={!match.mvp_name}
+            />
+            <AwardCard 
+              emoji="⚔️" 
+              title="Top Killer" 
+              value={topFragger ? <QuakeName name={topFragger.name_raw || topFragger.name_display} /> : "N/A"} 
+              subtext={topFragger ? `${topFragger.kills} kills` : "0 kills"} 
+              empty={!topFragger || topFragger.kills === 0}
+            />
+            <AwardCard 
+              emoji="💉" 
+              title="Top Medic" 
+              value={topMedic ? <QuakeName name={topMedic.name_raw || topMedic.name_display} /> : "N/A"} 
+              subtext={topMedic ? `${topMedic.revives} revives` : "0 revives"} 
+              empty={!topMedic || topMedic.revives === 0}
+            />
+            <AwardCard 
+              emoji="💥" 
+              title="Spammer" 
+              value={topSpammer ? <QuakeName name={topSpammer.name_raw || topSpammer.name_display} /> : "N/A"} 
+              subtext={topSpammer ? `${topSpammer.spam_kills} spamkills` : "0 spamkills"} 
+              empty={!topSpammer || topSpammer.spam_kills === 0}
+            />
+            <AwardCard 
+              emoji="🎧" 
+              title="iPod" 
+              value={topIpod ? <QuakeName name={topIpod.name_raw || topIpod.name_display} /> : "N/A"} 
+              subtext={topIpod ? `${topIpod.deaths} deaths (Fewest)` : "N/A"} 
+              empty={!topIpod}
+            />
+            <AwardCard 
+              emoji="🔥" 
+              title="Friendly Fire" 
+              value={topTK && (topTK.team_kills || 0) > 0 ? <QuakeName name={topTK.name_raw || topTK.name_display} /> : "Clean"} 
+              subtext={topTK ? `${topTK.team_kills || 0} Team Kills` : "0 Team Kills"} 
+              empty={!topTK || (topTK.team_kills || 0) === 0}
+            />
           </div>
         </div>
       )}

@@ -24,6 +24,7 @@ def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
         name_raw=pms.name_raw,
         team=pms.team,
         eff=pms.eff,
+        unified_eff=pms.unified_eff,
         kdr=pms.kdr,
         kills=pms.kills,
         deaths=pms.deaths,
@@ -32,6 +33,7 @@ def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
         headshots=pms.headshots,
         gibs=pms.gibs,
         revives=pms.revives,
+        medkits=pms.medkits,
         team_medpacks=pms.team_medpacks,
         spam_kills=pms.spam_kills,
         distance_travelled_meters=pms.distance_travelled_meters,
@@ -45,6 +47,7 @@ def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
         team_damage_given=pms.team_damage_given,
         team_gibs=pms.team_gibs,
         self_kills=pms.self_kills,
+        xp=pms.xp,
         weapon_breakdown=wb,
     )
 
@@ -133,12 +136,12 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             if pms.team == 1: axis_round2.append(r)
             else: allies_round2.append(r)
 
-    axis.sort(key=lambda x: (-x.kills, x.name_display.lower()))
-    allies.sort(key=lambda x: (-x.kills, x.name_display.lower()))
-    axis_round1.sort(key=lambda x: (-x.kills, x.name_display.lower()))
-    allies_round1.sort(key=lambda x: (-x.kills, x.name_display.lower()))
-    axis_round2.sort(key=lambda x: (-x.kills, x.name_display.lower()))
-    allies_round2.sort(key=lambda x: (-x.kills, x.name_display.lower()))
+    axis.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
+    allies.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
+    axis_round1.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
+    allies_round1.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
+    axis_round2.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
+    allies_round2.sort(key=lambda x: (-x.unified_eff, x.name_display.lower()))
 
     max_rivalry = None
     max_count = 0

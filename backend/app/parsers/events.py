@@ -2,6 +2,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+WP_SYRINGE = 11
+WP_AMMO = 12
 WP_MEDKIT = 19
 
 
@@ -23,6 +25,8 @@ class EventMetrics:
     headshot_hits: int = 0
     shots_recorded: int = 0
     team_medpacks: int = 0
+    team_ammopacks: int = 0
+    revives: int = 0
     nemesis_kills: dict[str, int] = field(default_factory=dict)
     nemesis_deaths: dict[str, int] = field(default_factory=dict)
 
@@ -77,11 +81,17 @@ def compute_event_metrics(
                     m.headshot_hits += 1
                 m.shots_recorded += 1
 
-            if _same_player(atk, pg) and mod_i == WP_MEDKIT and not _same_player(atk, tgt):
+
+            if _same_player(atk, pg) and not _same_player(atk, tgt):
                 t_team = team_by_guid.get(tgt, 0)
                 p_team = team_by_guid.get(pg, 0)
                 if t_team and p_team and t_team == p_team:
-                    m.team_medpacks += 1
+                    if mod_i == WP_MEDKIT:
+                        m.team_medpacks += 1
+                    elif mod_i == WP_AMMO:
+                        m.team_ammopacks += 1
+                    elif mod_i == WP_SYRINGE:
+                        m.revives += 1
 
     # Process new gamelog format
     if gamelog:
@@ -123,11 +133,22 @@ def compute_event_metrics(
                         m.headshot_hits += 1
                     m.shots_recorded += 1
 
-                if _same_player(atk, pg) and mod_i == WP_MEDKIT and not _same_player(atk, tgt):
+
+                if _same_player(atk, pg) and not _same_player(atk, tgt):
                     t_team = team_by_guid.get(tgt, 0)
                     p_team = team_by_guid.get(pg, 0)
                     if t_team and p_team and t_team == p_team:
-                        m.team_medpacks += 1
+                        if mod_i == WP_MEDKIT:
+                            m.team_medpacks += 1
+                        elif mod_i == WP_AMMO:
+                            m.team_ammopacks += 1
+                        elif mod_i == WP_SYRINGE:
+                            m.revives += 1
+
+            elif label == "revive":
+                p_guid = _get_master(str(ev.get("player") or "")) # Medic
+                if _same_player(p_guid, pg):
+                    m.revives += 1
 
     return m
 

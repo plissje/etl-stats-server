@@ -189,6 +189,27 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
 
     # Calculate lifetime stats (totals)
     tr_list = [pms for pms in pms_list if pms.round_index == 0]
+    
+    class_stats = {
+        "soldier": 0,
+        "medic": 0,
+        "engineer": 0,
+        "fieldop": 0,
+        "covertops": 0
+    }
+    
+    for tr in tr_list:
+        if tr.classes_played_json:
+            try:
+                classes = json.loads(tr.classes_played_json)
+                unique_match_classes = {c["toClass"] for c in classes if "toClass" in c}
+                for cname in unique_match_classes:
+                    cname_lower = cname.lower()
+                    if cname_lower in class_stats:
+                        class_stats[cname_lower] += 1
+            except:
+                pass
+
     lifetime = {
         "kills": sum(tr.kills for tr in tr_list),
         "deaths": sum(tr.deaths for tr in tr_list),
@@ -246,4 +267,5 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
         "total_matches": total_matches,
         "match_history": match_history,
         "lifetime_stats": lifetime,
+        "class_stats": class_stats,
     }

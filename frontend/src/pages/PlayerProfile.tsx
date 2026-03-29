@@ -244,6 +244,61 @@ export function PlayerProfile() {
 
         {/* Sidebar */}
         <div className="space-y-8">
+          {/* Class Specialization */}
+          {p.class_stats && (
+            <section className="p-8 bg-zinc-900/40 border border-white/5 rounded-[2.5rem] backdrop-blur-sm relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-violet-500/20 to-transparent" />
+              <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em] mb-8 flex items-center gap-2">
+                 <Zap className="w-3 h-3 text-violet-500" />
+                 Class Specialization
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { id: 'medic', name: 'Medic', icon: '💉' },
+                  { id: 'engineer', name: 'Eng', icon: '🔧' },
+                  { id: 'fieldop', name: 'Field', icon: '🎒' },
+                  { id: 'soldier', name: 'Soldier', icon: '🪖' },
+                  { id: 'covertops', name: 'Covert', icon: '🕶️' }
+                ]
+                .sort((a, b) => (p.class_stats?.[b.id] || 0) - (p.class_stats?.[a.id] || 0))
+                .map((c, idx) => {
+                  const count = p.class_stats?.[c.id] || 0;
+                  const isActive = count > 0;
+                  const isFeatured = idx === 0 && isActive;
+                  return (
+                    <div 
+                      key={c.id} 
+                      className={`flex flex-col gap-1 p-3 rounded-2xl border transition-all duration-500 shadow-sm
+                        ${isFeatured ? 'col-span-2 bg-violet-600/10 border-violet-500/30 scale-[1.02] -translate-y-1' : 'col-span-1'}
+                        ${isActive ? 'bg-zinc-800/20 border-white/5 group/class' : 'bg-transparent border-transparent opacity-30 grayscale'}
+                      `}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`${isFeatured ? 'text-2xl' : 'text-lg'} transform transition-transform group-hover/class:scale-110`}>
+                          {c.icon}
+                        </span>
+                        <span className={`${isFeatured ? 'text-[11px]' : 'text-[10px]'} font-black text-zinc-500 uppercase tracking-widest`}>
+                          {c.name}
+                        </span>
+                        {isFeatured && (
+                          <span className="ml-auto text-[9px] font-black text-violet-400 uppercase tracking-wider bg-violet-500/10 px-2 py-0.5 rounded-full border border-violet-500/20">
+                            Primary Role
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className={`${isFeatured ? 'text-2xl' : 'text-base'} font-black text-zinc-100`}>{count}</span>
+                        <span className={`${isFeatured ? 'text-[9px]' : 'text-[8px]'} font-bold text-zinc-600 uppercase tracking-tighter`}>
+                          Picks
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {/* Rating Chart */}
           <section className="p-8 bg-zinc-900/40 border border-white/5 rounded-[2.5rem] backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-violet-500/20 to-transparent" />
