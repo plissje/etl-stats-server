@@ -100,6 +100,50 @@ def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depen
     }
 
 
+@router.post("/recalculate-ratings")
+def recalculate_ratings(db: Session = Depends(get_db)):
+    """
+    Triggers a full ratings recalculation from scratch across all matches.
+    """
+    recalculate_all_ratings(db)
+    return {"status": "ok", "message": "Global rating recalculation complete."}
+
+
+@router.post("/migrate")
+def run_db_migrations(db: Session = Depends(get_db)):
+    """
+    Applies missing database columns for raw_payload, unified_eff, and medkits.
+    This effectively allows self-healing schema updates without manual SQL access.
+    """
+    import sqlite3
+    # Get the raw connection from SQLAlchemy for ALTER TABLE 
+    conn = db.get_bind().raw_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Helper to add column if it doesn't exist
+        def add_col(table, col, definition):
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+                print(f"DEBUG: Added {col} to {table}")
+            except Exception as e:
+                # SQLite doesn't have IF NOT EXISTS for ADD COLUMN before 3.35,
+                # so we catch the error if it already exists.
+                if "duplicate column name" in str(e).lower():
+                    pass
+                else:
+                    print(f"DEBUG: Error adding {col}: {e}")
+
+        add_col("matches", "raw_payload", "TEXT")
+        add_col("player_match_stats", "unified_eff", "FLOAT DEFAULT 0.0")
+        add_col("player_match_stats", "medkits", "INTEGER DEFAULT 0")
+        
+        conn.commit()
+        return {"status": "ok", "message": "Database schema migration complete."}
+    except Exception as e:
+        return {"status": "error", "message": f"Migration failed: {str(e)}"}
+
+
 @router.post("/consolidate")
 def consolidate_aliases(db: Session = Depends(get_db)):
     """
