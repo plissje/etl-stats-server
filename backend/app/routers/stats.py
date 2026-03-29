@@ -61,14 +61,14 @@ def stats_overview(db: Session = Depends(get_db)) -> dict:
 
     # Recent 10 Matches
     recent_matches_query = (
-        db.query(Match.match_id, Match.mapname, Match.created_at)
+        db.query(Match.id, Match.match_id, Match.mapname, Match.created_at)
         .order_by(Match.created_at.desc())
         .limit(10)
         .all()
     )
     recent_matches = [
-        {"match_id": m_id, "mapname": mapn, "created_at": ca.isoformat()}
-        for m_id, mapn, ca in recent_matches_query
+        {"id": db_id, "match_id": m_id, "mapname": mapn, "created_at": ca.isoformat()}
+        for db_id, m_id, mapn, ca in recent_matches_query
     ]
 
     # Total Time Played

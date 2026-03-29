@@ -128,7 +128,7 @@ export function OverviewTab() {
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
                 {stats.recent_matches.map((m) => (
-                  <tr key={m.match_id} className="hover:bg-zinc-800/30 transition group">
+                  <tr key={m.id} className="hover:bg-zinc-800/30 transition group">
                     <td className="px-4 py-3">
                       <div className="text-zinc-300 font-medium group-hover:text-violet-400 transition">{m.mapname}</div>
                       <div className="text-[10px] text-zinc-600 font-mono">{m.match_id.slice(0, 8)}</div>
@@ -142,7 +142,7 @@ export function OverviewTab() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link to={`/match/${m.match_id}`} className="text-zinc-600 hover:text-zinc-100 transition inline-block translate-x-0 group-hover:translate-x-1">
+                      <Link to={`/match/${m.id}`} className="text-zinc-600 hover:text-zinc-100 transition inline-block translate-x-0 group-hover:translate-x-1">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                       </Link>
                     </td>

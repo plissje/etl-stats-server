@@ -129,7 +129,7 @@ export type StatsOverview = {
   top_maps: { mapname: string; count: number }[]
   top_players: { name: string; guid: string; rating: number }[]
   top_mvps: { name: string; guid: string; count: number }[]
-  recent_matches: { match_id: string; mapname: string; created_at: string }[]
+  recent_matches: { id: number; match_id: string; mapname: string; created_at: string }[]
   total_kills: number
   total_damage: number
   total_time_played_s: number
