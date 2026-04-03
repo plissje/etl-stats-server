@@ -8,8 +8,8 @@ class PlayerPerformance:
     team: int
     xp: float
     kills: int
+    damage_given: int
     revives: int
-    ammo_packs: int
     deaths: int
     self_kills: int
     mu: float
@@ -53,10 +53,11 @@ def calculate_openskill_ratings(
     # Support XP is normalized to 100 max (300 XP = 100 score)
     def get_score(p: PlayerPerformance) -> float:
         # Unified Contribution Points:
-        # 1.0 per Kill/Revive
-        # 0.25 per Ammo Pack
-        # 0.10 per XP (Rewards Objectives, Repairs, etc.)
-        total_points = p.kills + p.revives + (p.ammo_packs * 0.25) + (p.xp * 0.10)
+        # 1.0 per Kill
+        # 0.33 per Revive (1 kill = 3 revives)
+        # 1.0 per 100 Damage Given
+        # 0.10 per XP (Objective Bonus)
+        total_points = p.kills + (p.revives * 0.33) + (p.damage_given / 100.0) + (p.xp * 0.1)
         
         # Unified Efficiency: Points / (Points + Deaths + SelfKills)
         total_actions = total_points + p.deaths + p.self_kills
@@ -99,15 +100,14 @@ def calculate_openskill_ratings(
             ratio = player_score / max(1.0, team_avg_score)
             
             # Symmetric Boost logic: (Ratio - 1.0) * Sensitivity
-            # A 20% better performance (+0.2 ratio) gives +0.2 * 1.5 = +0.3 mu boost
-            # A 20% worse performance (-0.2 ratio) gives -0.2 * 1.5 = -0.3 mu penalty
-            individual_performance_boost = (ratio - 1.0) * 1.5
+            # Sensitivity 3.0 aggressively separates carries from carried.
+            individual_performance_boost = (ratio - 1.0) * 3.0
             
-            # 60/40 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
-            total_mu_change = (mu_delta_team * 0.4) + (individual_performance_boost * 0.6)
+            # 80/20 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
+            total_mu_change = (mu_delta_team * 0.2) + (individual_performance_boost * 0.8)
             
-            # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.0 mu per game)
-            total_mu_change = max(-2.0, min(2.0, total_mu_change))
+            # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.5 mu per game)
+            total_mu_change = max(-2.5, min(2.5, total_mu_change))
 
             sigma_delta = new_r.sigma - old_r.sigma
             final_mu = old_r.mu + total_mu_change

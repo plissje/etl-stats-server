@@ -1,11 +1,14 @@
+import time
 import json
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.orm import Session, defer, joinedload
+from collections import defaultdict
 
 from app.database import get_db
 from app.models import Match, Player, PlayerMatchStats
 from app.schemas import MatchDetailOut, MatchSummaryOut, PlayerMatchRowOut
+from app.utils import record_slow_query
 
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
@@ -57,29 +60,55 @@ def list_matches(
     skip: int = 0, 
     limit: int = 50, 
     mapname: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    response: Response = None
 ) -> list[MatchSummaryOut]:
+    start_time = time.time()
+    
+    # Base query with filters
     q = db.query(Match)
     if mapname:
         q = q.filter(Match.mapname == mapname)
+    
+    # Get total count for pagination headers
+    total_count = q.count()
+    if response:
+        response.headers["X-Total-Count"] = str(total_count)
+        # Expose header for cross-origin frontend
+        response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
+    
+    # Final query with defer, joinedload and pagination
+    q = q.options(defer(Match.raw_payload), joinedload(Match.mvp_player))
     q = q.order_by(Match.round_start_unix.desc()).offset(skip).limit(min(limit, 200))
     matches = q.all()
     
+    if not matches:
+        return []
+
+    # Batch fetch all players and stats for the entire page in one join query (Fixes N+1)
+    match_ids = [m.id for m in matches]
+    player_rows = (
+        db.query(PlayerMatchStats, Player)
+        .join(Player, Player.id == PlayerMatchStats.player_id)
+        .filter(PlayerMatchStats.match_id.in_(match_ids))
+        .filter(PlayerMatchStats.round_index == 0)
+        .all()
+    )
+    
+    # Group results by match_id for O(1) lookup in the loop below
+    players_by_match = defaultdict(list)
+    for pms, p in player_rows:
+        players_by_match[pms.match_id].append((pms, p))
+    
     out = []
     for m in matches:
-        player_rows = (
-            db.query(PlayerMatchStats, Player)
-            .join(Player, Player.id == PlayerMatchStats.player_id)
-            .filter(PlayerMatchStats.match_id == m.id)
-            .filter(PlayerMatchStats.round_index == 0)
-            .all()
-        )
+        m_players = players_by_match[m.id]
         axis_names = []
         allies_names = []
         mvp_name = None
         best_score = -1.0
 
-        for pms, p in player_rows:
+        for pms, p in m_players:
             if pms.team == 1:
                 axis_names.append(p.display_name)
             elif pms.team == 2:
@@ -87,7 +116,6 @@ def list_matches(
             
             # Team-agnostic MVP logic: highest score overall
             score = pms.eff + (pms.xp / 10.0)
-            # Add a small bonus for winning team to break ties
             if m.winner_team > 0 and pms.team == m.winner_team:
                 score += 0.01
                 
@@ -107,6 +135,10 @@ def list_matches(
             mvp_name=m.mvp_player.display_name if m.mvp_player else mvp_name,
             mvp_guid=m.mvp_player.guid if m.mvp_player else None,
         ))
+
+    duration = time.time() - start_time
+    record_slow_query("list_matches", duration, f"count={len(matches)}")
+    
     return out
 
 
@@ -177,6 +209,21 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             best_score = score
             mvp = pl
 
+    r1_alpha_side, r2_alpha_side = None, None
+    if m.raw_payload:
+        try:
+            payloads = json.loads(m.raw_payload)
+            if isinstance(payloads, list):
+                for p in payloads:
+                    r_info = p.get("round_info") or {}
+                    ri = int(r_info.get("round_index") or r_info.get("round") or 0)
+                    # Oksii modular stats path: metadata -> scores -> round -> alpha_side
+                    side = p.get("metadata", {}).get("scores", {}).get("round", {}).get("alpha_side")
+                    if ri == 1: r1_alpha_side = side
+                    elif ri == 2: r2_alpha_side = side
+        except:
+            pass
+
     return MatchDetailOut(
         match=MatchSummaryOut(
             id=m.id,
@@ -195,6 +242,8 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
         allies_round1=allies_round1,
         axis_round2=axis_round2,
         allies_round2=allies_round2,
+        round1_alpha_side=r1_alpha_side,
+        round2_alpha_side=r2_alpha_side,
         rivalry=max_rivalry
     )
 

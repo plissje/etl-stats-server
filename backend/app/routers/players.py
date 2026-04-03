@@ -1,46 +1,76 @@
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy import func
 
 from app.database import get_db
 from app.models import Player, PlayerGatherRating, PlayerGatherRatingHistory, PlayerMatchStats
 from app.schemas import PlayerProfileOut
+from app.utils import record_slow_query
 
 router = APIRouter(prefix="/api/players", tags=["players"])
 
 
-WEAPON_NAME_MAP = {
-    "WS_KNIFE": "Knife",
-    "WS_KNIFE_KBAR": "K-Bar",
-    "WS_LUGER": "Luger",
-    "WS_COLT": "Colt",
-    "WS_MP40": "MP40",
-    "WS_THOMPSON": "Thompson",
-    "WS_STEN": "Sten",
-    "WS_FG42": "FG42",
-    "WS_PANZERFAUST": "Panzerfaust",
-    "WS_BAZOOKA": "Bazooka",
-    "WS_FLAMETHROWER": "Flamethrower",
-    "WS_GRENADE": "Grenade",
-    "WS_MORTAR": "Mortar",
-    "WS_MORTAR2": "Mortar",
-    "WS_DYNAMITE": "Dynamite",
-    "WS_AIRSTRIKE": "Airstrike",
-    "WS_ARTILLERY": "Artillery",
-    "WS_SATCHEL": "Satchel",
-    "WS_GRENADELAUNCHER": "Grenade Launcher",
-    "WS_LANDMINE": "Landmine",
-    "WS_MG42": "MG42",
-    "WS_BROWNING": "Browning",
-    "WS_CARBINE": "M1 Carbine",
-    "WS_KAR98": "Kar98",
-    "WS_GARAND": "Garand",
-    "WS_K43": "K43",
-    "WS_MP34": "MP34",
-    "WS_SYRINGE": "Syringe",
+# Map raw weapon IDs and legacy string names to centralized Groups
+WEAPON_GROUP_MAP = {
+    # SMGs
+    "WS_MP40": "SMG", "MP40": "SMG", "MP-40": "SMG",
+    "WS_THOMPSON": "SMG", "THOMPSON": "SMG",
+    "WS_STEN": "SMG", "STEN": "SMG",
+    "WS_MP34": "SMG", "MP34": "SMG",
+    
+    # Rifles (Semi & Bolt)
+    "WS_KAR98": "Rifle", "KAR98": "Rifle", "KAR98 (AXIS)": "Rifle", "WS_KAR98_ALT": "Rifle",
+    "WS_GARAND": "Rifle", "GARAND": "Rifle",
+    "WS_K43": "Rifle", "K43": "Rifle",
+    "WS_CARBINE": "Rifle", "CARBINE": "Rifle", "M1 CARBINE": "Rifle", "CARBINE (ALLIED)": "Rifle",
+    "WS_RIFLE": "Rifle", "RIFLE": "Rifle",
+    
+    # Snipers
+    "WS_FG42": "Sniper", "FG42": "Sniper",
+    "K43 SCOPE": "Sniper", "GARAND SCOPE": "Sniper",
+    
+    # Pistols
+    "WS_LUGER": "Pistol", "LUGER": "Pistol",
+    "WS_COLT": "Pistol", "COLT": "Pistol",
+    
+    # Hand Grenades
+    "WS_GRENADE": "Hand Grenade", "HAND GRENADE": "Hand Grenade", "GRENADE": "Hand Grenade",
+    
+    # Rifle Grenades
+    "WS_GRENADELAUNCHER": "Rifle Grenade", "GRENADE LAUNCHER": "Rifle Grenade",
+    "WS_RIFLE_GRENADE": "Rifle Grenade", "RIFLE GRENADE": "Rifle Grenade",
+    
+    # Heavy Weapons
+    "WS_PANZERFAUST": "Heavy", "PANZERFAUST": "Heavy",
+    "WS_BAZOOKA": "Heavy", "BAZOOKA": "Heavy",
+    "WS_FLAMETHROWER": "Heavy", "FLAMETHROWER": "Heavy",
+    "WS_MORTAR": "Heavy", "MORTAR": "Heavy", "WS_MORTAR2": "Heavy",
+    
+    # MGs
+    "WS_MG42": "MG", "MG42": "MG",
+    "WS_BROWNING": "MG", "BROWNING": "MG",
+
+    # Support Strikes
+    "WS_AIRSTRIKE": "Air/Artillery", "AIRSTRIKE": "Air/Artillery",
+    "WS_ARTILLERY": "Air/Artillery", "ARTILLERY": "Air/Artillery",
+    
+    # Explosives
+    "WS_DYNAMITE": "Dynamite", "DYNAMITE": "Dynamite",
+    "WS_SATCHEL": "Satchel", "SATCHEL": "Satchel",
+    "WS_LANDMINE": "Landmine", "LANDMINE": "Landmine",
+    
+    # Melee
+    "WS_KNIFE": "Knife", "KNIFE": "Knife", "WS_KNIFE_KBAR": "Knife", "KNIFE (KBAR)": "Knife", "WS_KNIFE_ALT": "Knife",
+    
+    # Hidden / Support (mapped to None will be filtered out)
+    "WS_SYRINGE": None, "SYRINGE": None, "SYRINGE (REVIVES) / REVIVES": None, "SYRINGE (REVIVES)": None,
+    "WS_MEDKIT": None, "MEDKIT": None, "LANDMINE / MEDKIT": None, "WS_MEDKIT_ALT": None,
+    "WS_MEDPACK": None, "MEDPACK": None, "AMMOPACK": None, "WS_AMMOPACK": None, "CARBINE (ALLIED) / AMMO": None,
+    "WS_NONE": None, "NONE": None, "UNKNOWN": None
 }
 
 def _aggregate_weapons(stats_rows: list[PlayerMatchStats]) -> list[dict[str, Any]]:
@@ -53,9 +83,13 @@ def _aggregate_weapons(stats_rows: list[PlayerMatchStats]) -> list[dict[str, Any
         except json.JSONDecodeError:
             continue
         for w in parts:
-            raw_key = str(w.get("name") or w.get("slot"))
-            display_name = WEAPON_NAME_MAP.get(raw_key, raw_key)
+            raw_key = str(w.get("name") or w.get("slot")).strip().upper()
+            display_name = WEAPON_GROUP_MAP.get(raw_key, raw_key)
             
+            # Skip hidden categories (Syringes, Medkits)
+            if display_name is None:
+                continue
+
             if display_name not in acc:
                 acc[display_name] = {
                     "name": display_name,
@@ -68,14 +102,18 @@ def _aggregate_weapons(stats_rows: list[PlayerMatchStats]) -> list[dict[str, Any
             acc[display_name]["shots"] += int(w.get("shots") or 0)
             acc[display_name]["kills"] += int(w.get("kills") or 0)
             acc[display_name]["headshots"] += int(w.get("headshots") or 0)
+    
     out = []
     for v in acc.values():
         shots = int(v["shots"])
         hits = int(v["hits"])
-        pct = round(100.0 * hits / shots, 2) if shots > 0 else None
-        out.append({**v, "accuracy_pct": pct})
-    out.sort(key=lambda x: (-(x["accuracy_pct"] or 0), -int(x["kills"])))
-    return out[:12]
+        # Accuracy normalization: cap at 100% just in case of weird legacy data
+        pct = min(100.0, round(100.0 * hits / shots, 2)) if shots > 0 else 0.0
+        out.append({**v, "accuracy": pct})
+    
+    # Sort by impact (Kills) then Accuracy
+    out.sort(key=lambda x: (-(int(x["kills"])), -(x["accuracy"] or 0)))
+    return out[:15] # Return top 15 groups
 
 
 @router.get("")
@@ -128,13 +166,17 @@ def leaderboards(db: Session = Depends(get_db)):
 
 
 @router.get("/{guid}", response_model=PlayerProfileOut)
-def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def player_profile(
+    guid: str, 
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 20
+) -> dict[str, Any]:
+    start_time = time.time()
     g = guid.strip().upper()
-    print(f"DEBUG: player_profile for guid='{g}' (original='{guid}')")
     pl = db.query(Player).filter(Player.guid == g).one_or_none()
     
     if not pl:
-        print(f"DEBUG: player not found in DB for guid='{g}'")
         raise HTTPException(404, "player not found")
 
     gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == pl.id).one_or_none()
@@ -160,7 +202,10 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     ]
 
     pms_list = db.query(PlayerMatchStats).filter(PlayerMatchStats.player_id == pl.id).all()
-    top_weapons = _aggregate_weapons(pms_list)
+    
+    # Only aggregate weapon stats from the "Total Match" rows (round_index == 0)
+    summary_pms_list = [pms for pms in pms_list if pms.round_index == 0]
+    top_weapons = _aggregate_weapons(summary_pms_list)
 
     nemesis_counts = {}
     killed_by_counts = {}
@@ -191,11 +236,7 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     tr_list = [pms for pms in pms_list if pms.round_index == 0]
     
     class_stats = {
-        "soldier": 0,
-        "medic": 0,
-        "engineer": 0,
-        "fieldop": 0,
-        "covertops": 0
+        "soldier": 0, "medic": 0, "engineer": 0, "fieldop": 0, "covertops": 0
     }
     
     for tr in tr_list:
@@ -207,8 +248,7 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
                     cname_lower = cname.lower()
                     if cname_lower in class_stats:
                         class_stats[cname_lower] += 1
-            except:
-                pass
+            except: pass
 
     lifetime = {
         "kills": sum(tr.kills for tr in tr_list),
@@ -228,16 +268,18 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     alias_rows = db.query(PlayerAlias).filter(PlayerAlias.player_id == pl.id).all()
     aliases = list({a.alias for a in alias_rows})
 
-    # Get total matches and recent match history
-    from app.models import Match
+    # Get total matches for pagination
     total_matches = db.query(func.count(PlayerMatchStats.id)).filter(PlayerMatchStats.player_id == pl.id, PlayerMatchStats.round_index == 0).scalar() or 0
     
+    # Optimized history query: join with Match but DEFER the heavy raw_payload
     recent_pms = (
         db.query(PlayerMatchStats, Match)
         .join(Match, Match.id == PlayerMatchStats.match_id)
+        .options(defer(Match.raw_payload))
         .filter(PlayerMatchStats.player_id == pl.id, PlayerMatchStats.round_index == 0)
         .order_by(Match.round_start_unix.desc())
-        .limit(50)
+        .offset(skip)
+        .limit(min(limit, 100))
         .all()
     )
     
@@ -253,6 +295,9 @@ def player_profile(guid: str, db: Session = Depends(get_db)) -> dict[str, Any]:
             "xp": pms.xp,
             "timestamp": m.round_start_unix,
         })
+
+    duration = time.time() - start_time
+    record_slow_query("player_profile", duration, f"guid={pl.guid}")
 
     return {
         "guid": pl.guid,

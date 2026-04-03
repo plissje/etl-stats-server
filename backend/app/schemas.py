@@ -77,6 +77,8 @@ class MatchDetailOut(BaseModel):
     allies_round1: list[PlayerMatchRowOut] | None = None
     axis_round2: list[PlayerMatchRowOut] | None = None
     allies_round2: list[PlayerMatchRowOut] | None = None
+    round1_alpha_side: int | None = None
+    round2_alpha_side: int | None = None
     rivalry: MatchRivalryOut | None = None
 
 

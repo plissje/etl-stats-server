@@ -5,7 +5,7 @@ import { QuakeName } from '../components/QuakeName'
 
 type SortKey = keyof Pick<PlayerRow,
   'eff' | 'kdr' | 'kills' | 'deaths' | 'damage_given' | 'damage_received' |
-  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'medkits' | 'team_medpacks' | 'time_played_pct' | 'unified_eff'
+  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'time_played_pct' | 'unified_eff'
 >
 type SortDir = 'asc' | 'desc'
 
@@ -31,7 +31,7 @@ const CLASS_ICONS: Record<string, string> = {
 }
 
 function PlayerMatchDetails({ row }: { row: PlayerRow }) {
-  const uniqueClasses = Array.from(new Set(row.classes_played?.map((c: any) => c.toClass).filter(Boolean) || []))
+  const uniqueClasses = Array.from(new Set(row.classes_played?.map(c => c.toClass).filter(Boolean) || []))
 
   return (
     <div className="p-4 md:p-6 bg-zinc-900/80 border-b border-zinc-700 shadow-inner text-sm space-y-6">
@@ -49,16 +49,19 @@ function PlayerMatchDetails({ row }: { row: PlayerRow }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/30">
-              {row.weapon_breakdown.filter((w: any) => w.shots > 0 || w.kills > 0).map((w: any) => (
-                <tr key={w.name} className="hover:bg-zinc-800/30">
-                  <td className="py-1.5">{w.name.replace('WS_', '')}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-400">{w.accuracy != null ? `${w.accuracy}%` : '-'}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-400">{w.hits} / {w.shots}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-200">{w.kills}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-400">{w.deaths}</td>
-                  <td className="py-1.5 text-right font-mono text-zinc-400">{w.headshots}</td>
-                </tr>
-              ))}
+              {row.weapon_breakdown.filter(w => w.shots > 0 || w.kills > 0).map(w => {
+                const acc = w.shots > 0 ? Math.min(100, Math.round((w.hits / w.shots) * 100)) : 0;
+                return (
+                  <tr key={w.name} className="hover:bg-zinc-800/30">
+                    <td className="py-1.5">{w.name.replace('WS_', '')}</td>
+                    <td className="py-1.5 text-right font-mono text-zinc-400">{w.shots > 0 ? `${acc}%` : '-'}</td>
+                    <td className="py-1.5 text-right font-mono text-zinc-400">{w.hits} / {w.shots}</td>
+                    <td className="py-1.5 text-right font-mono text-zinc-200">{w.kills}</td>
+                    <td className="py-1.5 text-right font-mono text-zinc-400">{w.deaths}</td>
+                    <td className="py-1.5 text-right font-mono text-zinc-400">{w.headshots}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -88,7 +91,7 @@ function PlayerMatchDetails({ row }: { row: PlayerRow }) {
             <div className="flex flex-col gap-2 bg-zinc-800/20 px-3 py-2 rounded-md border border-zinc-700/20 min-h-[44px] justify-center">
               <span className="text-zinc-500 text-[9px] font-bold uppercase tracking-wider opacity-60">Classes Summary</span>
               <div className="flex gap-2.5">
-                {uniqueClasses.map((c: any) => (
+                {uniqueClasses.map(c => (
                   <span key={c} title={c} className="text-xl select-none filter drop-shadow-lg scale-110 hover:scale-125 transition-transform duration-200">
                     {CLASS_ICONS[c] || c}
                   </span>
@@ -102,22 +105,20 @@ function PlayerMatchDetails({ row }: { row: PlayerRow }) {
   )
 }
 
-const COLS: { key: SortKey; label: string; title?: string; defaultDesc?: boolean }[] = [
-  { key: 'eff', label: 'EFF', title: 'Standard Efficiency: kills / (kills + deaths + selfKills) × 100', defaultDesc: true },
-  { key: 'kdr', label: 'KDR', title: 'Kill/Death Ratio', defaultDesc: true },
-  { key: 'kills', label: 'KILLS', title: 'Total kills delivered', defaultDesc: true },
-  { key: 'deaths', label: 'DEATHS', title: 'Total deaths (including Self Kills)', defaultDesc: false },
-  { key: 'damage_given', label: 'DMG G', title: 'Total damage given to enemies', defaultDesc: true },
-  { key: 'damage_received', label: 'DMG R', title: 'Total damage received from enemies', defaultDesc: false },
-  { key: 'headshots', label: 'HS', title: 'Total headshot kills', defaultDesc: true },
-  { key: 'gibs', label: 'GIBS', title: 'Total bodies gibbed / finished off', defaultDesc: true },
-  { key: 'self_kills', label: 'SK', title: 'Total self-kills (explosives or falling)', defaultDesc: false },
-  { key: 'team_kills', label: 'TK', title: 'Total team-kills', defaultDesc: false },
-  { key: 'revives', label: 'REV', title: 'Total players revived (1.0 Contribution Points each)', defaultDesc: true },
-  { key: 'medkits', label: 'MK', title: 'Total medkits dispensed (0.25 Contribution Points each)', defaultDesc: true },
-  { key: 'team_medpacks', label: 'AMMO', title: 'Total ammo packs dropped (0.25 Contribution Points each)', defaultDesc: true },
-  { key: 'time_played_pct', label: 'TIME', title: 'Percentage of the match duration the player was connected', defaultDesc: true },
-  { key: 'unified_eff', label: 'UE', title: 'Unified Efficiency (v4): contribution points / (points + deaths + selfKills) × 100', defaultDesc: true },
+const COLS: { key: SortKey; label: string; title?: string; defaultDesc?: boolean; width: string }[] = [
+  { key: 'eff', label: 'EFF', title: 'Standard Efficiency', defaultDesc: true, width: '55px' },
+  { key: 'kdr', label: 'KDR', title: 'Kill/Death Ratio', defaultDesc: true, width: '55px' },
+  { key: 'kills', label: 'K', title: 'Kills', defaultDesc: true, width: '45px' },
+  { key: 'deaths', label: 'D', title: 'Deaths', defaultDesc: false, width: '45px' },
+  { key: 'damage_given', label: 'DMG G', title: 'Damage Given', defaultDesc: true, width: '75px' },
+  { key: 'damage_received', label: 'DMG R', title: 'Damage Received', defaultDesc: false, width: '75px' },
+  { key: 'headshots', label: 'HS', title: 'Headshots', defaultDesc: true, width: '45px' },
+  { key: 'gibs', label: 'GIB', title: 'Gibs', defaultDesc: true, width: '45px' },
+  { key: 'self_kills', label: 'SK', title: 'Self Kills', defaultDesc: false, width: '45px' },
+  { key: 'team_kills', label: 'TK', title: 'Team Kills', defaultDesc: false, width: '45px' },
+  { key: 'revives', label: 'REV', title: 'Revives', defaultDesc: true, width: '50px' },
+  { key: 'time_played_pct', label: 'TIME', title: 'Time Played %', defaultDesc: true, width: '55px' },
+  { key: 'unified_eff', label: 'UE', title: 'Unified Efficiency', defaultDesc: true, width: '70px' },
 ]
 
 function colColor(key: SortKey, val: number, row?: PlayerRow): string {
@@ -172,7 +173,7 @@ function ScoreTable({
     return sortDir === 'desc' ? bv - av : av - bv
   })
 
-  const totals: Record<SortKey, number> = {} as any
+  const totals: Record<SortKey, number> = {} as Record<SortKey, number>
   for (const col of COLS) {
     if (col.key === 'eff' || col.key === 'unified_eff' || col.key === 'kdr' || col.key === 'time_played_pct') {
       totals[col.key] = rows.length ? rows.reduce((s, r) => s + (r[col.key] as number), 0) / rows.length : 0
@@ -185,22 +186,21 @@ function ScoreTable({
     <div className="w-full">
       <h2 className={`mb-3 text-lg font-bold tracking-wide ${accent}`}>{title}</h2>
       <div className="overflow-x-auto rounded-xl border border-zinc-800 shadow-xl bg-zinc-950/50">
-        <table className="w-full min-w-[900px] border-collapse text-left whitespace-nowrap">
+        <table className="w-full min-w-[950px] border-collapse text-left whitespace-nowrap table-fixed">
           <thead>
             <tr className="border-b border-zinc-800/80 bg-zinc-900/60">
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-500 min-w-[140px]">Name</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-500 w-[260px]">Name</th>
               {COLS.map(col => (
                 <th
                   key={col.key}
                   title={col.title}
                   onClick={() => onSort(col.key)}
-                  className={`py-3 text-right text-xs font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors ${
-                    col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
-                  } ${
+                  style={{ width: col.width }}
+                  className={`py-3 text-center text-xs font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors px-1 ${
                     sortKey === col.key ? 'text-violet-400' : 'text-zinc-500 hover:text-zinc-300'
                   }`}
                 >
-                  <span className="flex items-center justify-end gap-1">
+                  <span className="flex items-center justify-center gap-1">
                     {col.label}
                     {sortKey === col.key ? (
                       <span className="text-violet-400 opacity-80">{sortDir === 'desc' ? '↓' : '↑'}</span>
@@ -233,9 +233,7 @@ function ScoreTable({
                   {COLS.map(col => {
                     const val = (r[col.key] || 0) as number
                     return (
-                      <td key={col.key} className={`py-2 text-right font-mono text-sm ${
-                        col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
-                      } ${colColor(col.key, val, r)}`}>
+                      <td key={col.key} style={{ width: col.width }} className={`py-2 text-center font-mono text-[13px] px-1 overflow-hidden text-ellipsis ${colColor(col.key, val, r)}`}>
                         {formatVal(col.key, val)}
                       </td>
                     )
@@ -254,9 +252,7 @@ function ScoreTable({
               <tr className="bg-zinc-900/80 font-semibold border-t border-zinc-700">
                 <td className="px-4 py-3 text-zinc-300 text-sm">Total</td>
                 {COLS.map(col => (
-                  <td key={col.key} className={`py-3 text-right font-mono text-zinc-300 text-sm ${
-                    col.key === 'team_medpacks' ? 'px-1' : (col.key === 'unified_eff' ? 'px-6' : 'px-3')
-                  }`}>
+                  <td key={col.key} style={{ width: col.width }} className={`py-3 text-center font-mono text-zinc-300 text-[13px] px-1 overflow-hidden text-ellipsis`}>
                     {formatVal(col.key, totals[col.key])}
                   </td>
                 ))}
@@ -305,18 +301,31 @@ export function MatchDetail() {
     )
   }
 
-  const { match, axis, allies, axis_round1, allies_round1, axis_round2, allies_round2 } = data
+  const { match, axis, allies, axis_round1, allies_round1, axis_round2, allies_round2, round1_alpha_side, round2_alpha_side } = data
   const allPlayers = [...axis, ...allies]
 
-  let currentAxis = axis
-  let currentAllies = allies
+  const r1_alpha_side = round1_alpha_side ?? 1
+  const r2_alpha_side = round2_alpha_side ?? 2
+
+  let alphaRows = r1_alpha_side === 1 ? axis : allies
+  let betaRows = r1_alpha_side === 1 ? allies : axis
+  let alphaSide = r1_alpha_side
+  let betaSide = r1_alpha_side === 1 ? 2 : 1
+
   if (activeTab === 'round1' && axis_round1 && allies_round1 && axis_round1.length > 0) {
-    currentAxis = axis_round1
-    currentAllies = allies_round1
+    alphaRows = r1_alpha_side === 1 ? axis_round1 : allies_round1
+    betaRows = r1_alpha_side === 1 ? allies_round1 : axis_round1
+    alphaSide = r1_alpha_side
+    betaSide = r1_alpha_side === 1 ? 2 : 1
   } else if (activeTab === 'round2' && axis_round2 && allies_round2 && axis_round2.length > 0) {
-    currentAxis = axis_round2
-    currentAllies = allies_round2
+    alphaRows = r2_alpha_side === 1 ? axis_round2 : allies_round2
+    betaRows = r2_alpha_side === 1 ? allies_round2 : axis_round2
+    alphaSide = r2_alpha_side
+    betaSide = r2_alpha_side === 1 ? 2 : 1
   }
+
+  const sideLabel = (side: number) => side === 1 ? 'Axis' : 'Allies'
+  const sideColor = (side: number) => side === 1 ? 'text-rose-400' : 'text-sky-400'
 
   const topFragger = allPlayers.length ? allPlayers.reduce((m, p) => p.kills > m.kills ? p : m, allPlayers[0]) : null
   const topMedic = allPlayers.length ? allPlayers.reduce((m, p) => p.revives > m.revives ? p : m, allPlayers[0]) : null
@@ -421,14 +430,14 @@ export function MatchDetail() {
         </div>
 
         <ScoreTable 
-          title="Alpha" 
-          accent={activeTab === 'total' ? 'text-white' : activeTab === 'round1' ? 'text-rose-400' : 'text-sky-400'} 
-          rows={currentAxis} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
+          title={`Alpha ${activeTab !== 'total' ? `(${sideLabel(alphaSide)})` : ''}`} 
+          accent={activeTab === 'total' ? 'text-white' : sideColor(alphaSide)} 
+          rows={alphaRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
         />
         <ScoreTable 
-          title="Beta" 
-          accent={activeTab === 'total' ? 'text-white' : activeTab === 'round1' ? 'text-sky-400' : 'text-rose-400'} 
-          rows={currentAllies} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
+          title={`Beta ${activeTab !== 'total' ? `(${sideLabel(betaSide)})` : ''}`} 
+          accent={activeTab === 'total' ? 'text-white' : sideColor(betaSide)} 
+          rows={betaRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
         />
       </div>
     </div>

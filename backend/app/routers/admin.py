@@ -1,12 +1,15 @@
 import os
 import glob
 import json
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models import Match, Player, PlayerAlias, PlayerMatchStats, PlayerGatherRating, PlayerGatherRatingHistory
 from app.services.ingest import ingest_match_payloads, recalculate_all_ratings, load_aliases
+from app.utils import SLOW_QUERIES, record_slow_query
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -124,13 +127,28 @@ def recalculate_ratings(db: Session = Depends(get_db)):
     return {"status": "ok", "message": "Global rating recalculation complete."}
 
 
+@router.get("/match/{match_db_id}/raw")
+def get_match_raw(match_db_id: int, db: Session = Depends(get_db)):
+    """
+    Exposes the raw_payload for a given match (for debugging only).
+    """
+    m = db.query(Match).filter(Match.id == match_db_id).one_or_none()
+    if not m:
+        raise HTTPException(404, "match not found")
+    if not m.raw_payload:
+        return {"error": "no raw payload stored for this match"}
+    try:
+        return json.loads(m.raw_payload)
+    except:
+        return {"raw": m.raw_payload}
+
+
 @router.post("/migrate")
 def run_db_migrations(db: Session = Depends(get_db)):
     """
-    Applies missing database columns for raw_payload, unified_eff, and medkits.
+    Applies missing database columns and indexes.
     This effectively allows self-healing schema updates without manual SQL access.
     """
-    import sqlite3
     # Get the raw connection from SQLAlchemy for ALTER TABLE 
     conn = db.get_bind().raw_connection()
     try:
@@ -142,21 +160,86 @@ def run_db_migrations(db: Session = Depends(get_db)):
                 cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
                 print(f"DEBUG: Added {col} to {table}")
             except Exception as e:
-                # SQLite doesn't have IF NOT EXISTS for ADD COLUMN before 3.35,
-                # so we catch the error if it already exists.
                 if "duplicate column name" in str(e).lower():
                     pass
                 else:
                     print(f"DEBUG: Error adding {col}: {e}")
 
+        # Helper to add index if it doesn't exist
+        def add_idx(table, col, idx_name=None):
+            if not idx_name:
+                idx_name = f"idx_{table}_{col}"
+            try:
+                cursor.execute(f"CREATE INDEX {idx_name} ON {table}({col})")
+                print(f"DEBUG: Created index {idx_name}")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    pass
+                else:
+                    print(f"DEBUG: Error adding index {idx_name}: {e}")
+
         add_col("matches", "raw_payload", "TEXT")
         add_col("player_match_stats", "unified_eff", "FLOAT DEFAULT 0.0")
         add_col("player_match_stats", "medkits", "INTEGER DEFAULT 0")
         
+        # Performance Indexes
+        add_idx("matches", "round_start_unix")
+        add_idx("matches", "mapname")
+        add_idx("matches", "mvp_player_id")
+        
         conn.commit()
-        return {"status": "ok", "message": "Database schema migration complete."}
+        return {"status": "ok", "message": "Database schema migration and indexing complete."}
     except Exception as e:
         return {"status": "error", "message": f"Migration failed: {str(e)}"}
+
+
+@router.post("/db-maintenance")
+def db_maintenance(db: Session = Depends(get_db)):
+    """
+    Performs SQLite maintenance: VACUUM and ANALYZE.
+    """
+    try:
+        db.execute(text("VACUUM"))
+        db.execute(text("ANALYZE"))
+        return {"status": "ok", "message": "Database VACUUM and ANALYZE complete."}
+    except Exception as e:
+        raise HTTPException(500, f"Maintenance failed: {str(e)}")
+
+
+@router.get("/db-stats")
+def db_stats(db: Session = Depends(get_db)):
+    """
+    Returns database statistics including row counts and index information.
+    """
+    try:
+        counts = {
+            "matches": db.query(Match).count(),
+            "player_match_stats": db.query(PlayerMatchStats).count(),
+            "players": db.query(Player).count(),
+            "player_aliases": db.query(PlayerAlias).count(),
+        }
+        
+        # Get index list
+        indexes = []
+        res = db.execute(text("SELECT name, tbl_name FROM sqlite_master WHERE type='index'"))
+        for row in res:
+            indexes.append({"name": row[0], "table": row[1]})
+            
+        return {
+            "counts": counts,
+            "indexes": indexes,
+            "db_size_bytes": os.path.getsize("etl_stats.db") if os.path.exists("etl_stats.db") else 0
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Stats failed: {str(e)}")
+
+
+@router.get("/slow-queries")
+def get_slow_queries():
+    """
+    Returns the last 50 recorded slow queries.
+    """
+    return {"slow_queries": SLOW_QUERIES}
 
 
 @router.post("/consolidate")

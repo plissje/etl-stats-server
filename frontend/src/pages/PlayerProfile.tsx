@@ -33,13 +33,50 @@ export function PlayerProfile() {
   const { guid } = useParams<{ guid: string }>()
   const [p, setP] = useState<Profile | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const LIMIT = 20
 
   useEffect(() => {
     if (!guid) return
-    fetchPlayer(guid)
-      .then(setP)
+    setErr(null)
+    setHasMore(true)
+    fetchPlayer(guid, 0, LIMIT)
+      .then(data => {
+        setP(data)
+        if ((data.match_history?.length || 0) < LIMIT) {
+          setHasMore(false)
+        }
+      })
       .catch(() => setErr('Player not found'))
   }, [guid])
+
+  const loadMore = async () => {
+    if (!guid || !p || loadingMore || !hasMore) return
+    setLoadingMore(true)
+    try {
+      const skip = p.match_history?.length || 0
+      const nextData = await fetchPlayer(guid, skip, LIMIT)
+      if (nextData.match_history && nextData.match_history.length > 0) {
+        setP(prev => {
+          if (!prev) return nextData
+          return {
+            ...prev,
+            match_history: [...(prev.match_history || []), ...(nextData.match_history || [])]
+          }
+        })
+        if (nextData.match_history.length < LIMIT) {
+          setHasMore(false)
+        }
+      } else {
+        setHasMore(false)
+      }
+    } catch (e) {
+      console.error('Failed to load more matches', e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const chartData = useMemo(() => {
     if (!p?.rating_history?.length) return []
@@ -173,6 +210,27 @@ export function PlayerProfile() {
                 </tbody>
               </table>
             </div>
+            {hasMore && (
+              <div className="p-6 border-t border-white/5 bg-zinc-950/20 flex justify-center">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="px-8 py-2.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-300 text-xs font-black uppercase tracking-widest rounded-xl border border-white/5 transition-all hover:scale-105 active:scale-95 flex items-center gap-3 shadow-xl"
+                >
+                  {loadingMore ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <History className="w-3 h-3 text-violet-400" />
+                      Load Older Matches
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </section>
           
           {/* Lifetime Stats Grid */}
@@ -211,33 +269,45 @@ export function PlayerProfile() {
                <Crosshair className="w-4 h-4 text-violet-500" />
                Weapon Combat Efficiency
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {p.top_weapons.map((w) => {
-                const acc = w.accuracy_pct || 0;
-                return (
-                  <div key={w.name} className="p-5 bg-zinc-900/60 border border-white/5 rounded-3xl flex items-center justify-between group hover:border-violet-500/30 transition shadow-xl relative overflow-hidden">
-                    <div className="absolute -right-2 -bottom-2 opacity-5 group-hover:opacity-10 transition pointer-events-none">
-                       <Target className="w-20 h-20" />
-                    </div>
-                    <div className="space-y-1 relative z-10">
-                      <div className="text-zinc-500 font-black text-[10px] uppercase tracking-[0.2em] group-hover:text-violet-400 transition">{w.name}</div>
-                      <div className="text-3xl font-black text-white flex items-baseline gap-2">
-                        {w.kills}
-                        <span className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">Kills</span>
-                      </div>
-                    </div>
-                    <div className="text-right space-y-3 w-32 relative z-10">
-                      <div className="flex justify-between items-end">
-                        <span className="text-[10px] text-zinc-600 font-black uppercase tracking-widest">Aim</span>
-                        <span className="text-sm font-black text-violet-400">{acc}%</span>
-                      </div>
-                      <div className="h-1.5 bg-zinc-800/50 rounded-full overflow-hidden border border-white/5">
-                        <div className="h-full bg-gradient-to-r from-violet-600 to-violet-400 rounded-full transition-all duration-1000 shadow-[0_0_8px_rgba(139,92,246,0.5)]" style={{ width: `${acc}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="bg-zinc-900/40 border border-white/5 rounded-[2.5rem] overflow-hidden backdrop-blur-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-zinc-950/50 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
+                  <tr>
+                    <th className="px-8 py-5">Weapon Class</th>
+                    <th className="px-8 py-5">Kills</th>
+                    <th className="px-8 py-5 text-right">Combat Accuracy</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {p.top_weapons.map((w: any) => {
+                    const acc = w.accuracy ?? w.accuracy_pct ?? 0;
+                    return (
+                      <tr key={w.name} className="group/w hover:bg-white/[0.02] transition-colors">
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-violet-500/40 group-hover/w:bg-violet-400 transition-colors" />
+                            <span className="text-sm font-bold text-zinc-100 uppercase tracking-wider">{w.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className="text-lg font-black text-white">{w.kills}</span>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="flex flex-col items-end gap-2">
+                            <span className="text-sm font-black text-violet-400">{acc}%</span>
+                            <div className="w-32 h-1.5 bg-zinc-800/50 rounded-full overflow-hidden border border-white/5">
+                              <div 
+                                className="h-full bg-gradient-to-r from-violet-600 to-violet-400 rounded-full transition-all duration-1000 shadow-[0_0_8px_rgba(139,92,246,0.3)]" 
+                                style={{ width: `${acc}%` }} 
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </section>
         </div>

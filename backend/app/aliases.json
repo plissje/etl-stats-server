@@ -5,7 +5,8 @@
     "aliases": [
       "0FF10E4AA83C58C55E636DE73AD99FD2",
       "6C143D430742E81EC875A60BB63605BB",
-      "34EABCF1F5CA60260FAC83660C163C36"
+      "34EABCF1F5CA60260FAC83660C163C36",
+      "8610842295C0738DFDBE8828C002699B"
     ]
   },
   {
@@ -13,6 +14,20 @@
     "master_guid": "9550A06EABB78042D7AFE6D16B9578EA",
     "aliases": [
       "7D13C44A319C820D5157976CEE5CDAD0"
+    ]
+  },
+  {
+    "name": "eranmil",
+    "master_guid": "512CAB0B076FCB912B43293B97C8A4CF",
+    "aliases": [
+      "F99BB34A65AEC38CDEC7D565B608D3D6"
+    ]
+  },
+  {
+    "name": "N[e]o",
+    "master_guid": "21EC7122B50B214D359925D02A9097FA",
+    "aliases": [
+      "91B20247DC0CD101DA929A8026A4F903"
     ]
   }
 ]

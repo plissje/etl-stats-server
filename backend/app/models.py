@@ -11,14 +11,14 @@ class Match(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     match_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    mapname: Mapped[str] = mapped_column(String(128))
+    mapname: Mapped[str] = mapped_column(String(128), index=True)
     winner_team: Mapped[int] = mapped_column(Integer)
-    round_start_unix: Mapped[int] = mapped_column(Integer, default=0)
+    round_start_unix: Mapped[int] = mapped_column(Integer, default=0, index=True)
     round_end_unix: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    mvp_player_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("players.id"), nullable=True)
+    mvp_player_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("players.id"), nullable=True, index=True)
 
     player_stats: Mapped[list["PlayerMatchStats"]] = relationship(
         "PlayerMatchStats", back_populates="match", cascade="all, delete-orphan"

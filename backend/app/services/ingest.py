@@ -16,6 +16,7 @@ from app.models import (
 from app.parsers.events import compute_event_metrics, hs_accuracy, nemesis_to_json
 from app.parsers.names import strip_quake_colors
 from app.parsers.weapon_stats import UnpackedWeaponStats, revives_from_unpacked, unpack_weapon_stats
+from app.parsers.weapon_classes import ClassTimelineTracker
 from app.rating import PlayerPerformance, calculate_openskill_ratings, compute_display_rating
 
 
@@ -71,9 +72,10 @@ def _eff_kdr(kills: int, deaths: int, self_kills: int = 0) -> tuple[float, float
     return eff, kdr
 
 
-def _calculate_unified_eff(kills: int, revives: int, ammo: int, xp: int, deaths: int, self_kills: int) -> float:
+def _calculate_unified_eff(kills: int, revives: int, damage_given: int, xp: int, deaths: int, self_kills: int) -> float:
     # Unified Points formula from rating.py
-    points = kills + revives + (ammo * 0.25) + (xp * 0.10)
+    # 0.33 per Revive (1/3 of a kill), 0.1 per XP
+    points = kills + (revives * 0.33) + (damage_given / 100.0) + (xp * 0.1)
     total_actions = points + deaths + self_kills
     if total_actions <= 0:
         return 0.0
@@ -350,7 +352,31 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # Map to track cumulative session state *immediately before* the current round
     prev_unpacked_by_guid: dict[str, UnpackedWeaponStats] = {}
 
-    # 1. LOAD EXISTING STATS FROM DB (rounds we are NOT overwriting)
+    # --- CLEAN RE-INGESTION LOGIC ---
+    # Delete the "Match Summary" row (round_index=0) as it must always be recalculated
+    # from all rounds (both existing in DB and the new payloads).
+    db.query(PlayerMatchStats).filter(
+        PlayerMatchStats.match_id == match_row.id,
+        PlayerMatchStats.round_index == 0
+    ).delete()
+
+    # Identify the round indices we are about to ingest.
+    payload_rounds = []
+    for i, body in enumerate(payloads):
+        ri = body.get("round_info") or {}
+        r_idx = int(ri.get("round_index") or ri.get("round") or (i + 1))
+        payload_rounds.append(r_idx)
+
+    # Delete existing round-specific stats only for the rounds we are currently ingesting.
+    # This prevents duplicates if we are reprocessing or updating a specific round.
+    db.query(PlayerMatchStats).filter(
+        PlayerMatchStats.match_id == match_row.id,
+        PlayerMatchStats.round_index.in_(payload_rounds)
+    ).delete()
+    db.flush()
+
+    # LOAD REMAINING ROUNDS FROM DB (the ones we are NOT replacing)
+    # to maintain continuity for the Total Match (round_index=0) row.
     existing_stats = db.query(PlayerMatchStats).filter(
         PlayerMatchStats.match_id == match_row.id,
         PlayerMatchStats.round_index > 0
@@ -428,7 +454,12 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 team_kills=row.team_kills,
                 team_gibs=row.team_gibs,
                 time_played_pct=row.time_played_pct,
-                xp=row.xp
+                xp=row.xp,
+                kills=row.kills,
+                deaths=row.deaths,
+                revives=row.revives,
+                medkits=row.medkits,
+                ammopacks=row.team_medpacks
             )
             # Store some extra metadata for numeric deltas derived from pdata
             setattr(mock_unpacked, "_round_idx", row.round_index)
@@ -457,16 +488,21 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         obituaries = round_info.get("obituaries")
         damage_stats = round_info.get("damageStats")
         gamelog = body.get("gamelog")
+        
+        # Track class timeline for precise weapon mapping during unpack
+        class_tracker = ClassTimelineTracker(gamelog or [])
 
         team_by_guid: dict[str, int] = {}
         first_team_by_guid: dict[str, int] = {} # Fix: Track the team they started the match with
         
         # ... later in the final total stats loop we'll use this
         for g, pdata in player_stats.items():
+            g_norm = g.strip().upper()
+            g_master = aliases.get(g_norm, g_norm)
             try:
-                team_by_guid[g.strip().upper()] = int(pdata.get("team") or 0)
+                team_by_guid[g_master] = int(pdata.get("team") or 0)
             except (TypeError, ValueError):
-                team_by_guid[g.strip().upper()] = 0
+                team_by_guid[g_master] = 0
 
         for guid_key, pdata in player_stats.items():
             guid = guid_key.strip().upper()
@@ -519,7 +555,15 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ws_raw = pdata.get("weaponStats") or []
             if not isinstance(ws_raw, list):
                 ws_raw = []
-            unpacked = unpack_weapon_stats(ws_raw)
+                
+            # Determine the primary class for this round for accurate weapon labeling
+            primary_class = class_tracker.get_class_at(guid, 99999999999) # gets last known class
+            if primary_class == "unknown":
+                switches = pdata.get("class_switches") or []
+                if switches:
+                    primary_class = switches[-1].get("toClass") or "unknown"
+                    
+            unpacked = unpack_weapon_stats(ws_raw, primary_class)
 
             em = compute_event_metrics(guid, obituaries, damage_stats, team_by_guid, gamelog, aliases=aliases)
             
@@ -560,29 +604,35 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     mw["deaths"] = max(mw["deaths"], w.deaths)
                     mw["headshots"] = max(mw["headshots"], w.headshots)
 
-            eff, kdr = _eff_kdr(kills, deaths, sk)
+            # Prioritize the granular support keys from the gamelog events (EventMetrics)
             revives = em.revives
             medkits = em.team_medpacks
             ammo_packs = em.team_ammopacks
 
-            # Fallbacks for legacy scripts where events might be missing
-            if revives == 0 and not gamelog:
-                revives = revives_from_unpacked(unpacked) or int(pdata.get("revives") or 0)
-            if medkits == 0 and not gamelog:
-                medkits = int(pdata.get("medkits") or 0)
-            if ammo_packs == 0 and not gamelog:
-                ammo_packs = int(pdata.get("team_medpacks") or 0) # Historical label
-            
-            # Unified Efficiency calculation for the round row (v4 logic)
-            # (kills + revives + ammo*0.25 + meds*0.25? No, user says both are trackable, 
-            # let's use the same point value for both support packs)
-            u_points = kills + revives + (ammo_packs * 0.25) + (medkits * 0.25) + (xp * 0.10)
+            # Fallback to Engine weapon statistics (Oksii logic)
+            # Now natively class-aware inside unpack_weapon_stats!
+            if unpacked:
+                if revives == 0: revives = unpacked.revives
+                if medkits == 0: medkits = unpacked.medkits
+                if ammo_packs == 0: ammo_packs = unpacked.ammopacks
+
+            # Final fallbacks to master JSON payload keys if still zero
+            if revives == 0: revives = int(pdata.get("revives") or 0)
+            if medkits == 0: medkits = int(pdata.get("medkits") or 0)
+            if ammo_packs == 0: ammo_packs = int(pdata.get("ammopacks") or 0)
+
+            eff, kdr = _eff_kdr(kills, deaths, sk)
+            # Unified Efficiency calculation for the round row (v6 logic)
+            # 0.33 per Revive, 0.1 per XP
+            u_points = kills + (revives * 0.33) + (dg / 100.0) + (xp * 0.1)
             u_actions = u_points + deaths + sk
             u_eff = round((u_points / max(1, u_actions)) * 100.0, 1)
 
             spam_kills = 0
             if unpacked:
-                spam_slots = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+                # Synchronized spam filter for ET: Legacy 2.76 / Oksii indices:
+                # 8:Panzer, 9:Bazooka, 10:Flame, 12/13:Mortar, 14:Dyna, 15:Airstrike, 16:Arty, 18:RifleGrenade, 19:Landmine
+                spam_slots = {8, 9, 10, 12, 13, 14, 15, 16, 18, 19}
                 spam_kills = sum(w.kills for w in unpacked.weapons if w.slot in spam_slots)
 
             hs_acc = hs_accuracy(em.headshot_hits, em.shots_recorded)
@@ -601,7 +651,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             if not classes_played and gamelog:
                 for ev in gamelog:
                     # Lua sends 'player' as the GUID key in gamelog events
-                    ev_player = str(ev.get("player") or "").strip().upper()
+                    ev_player_raw = str(ev.get("player") or "").strip().upper()
+                    ev_player = aliases.get(ev_player_raw, ev_player_raw)
                     if ev_player == guid:
                         label = ev.get("label")
                         if label in ("spawn", "class_change"):
@@ -651,7 +702,13 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             r_tk = tk - (p_unpacked.team_kills if p_unpacked else 0)
             r_tg = tg - (p_unpacked.team_gibs if p_unpacked else 0)
             r_xp = xp - (p_unpacked.xp if p_unpacked else 0)
-            r_revives = revives - (revives_from_unpacked(p_unpacked) if p_unpacked else 0)
+            r_revives = revives - (p_unpacked.revives if p_unpacked and hasattr(p_unpacked, "revives") else 0)
+            r_medkits = medkits - (p_unpacked.medkits if p_unpacked and hasattr(p_unpacked, "medkits") else 0)
+            r_ammo_packs = ammo_packs - (p_unpacked.ammopacks if p_unpacked and hasattr(p_unpacked, "ammopacks") else 0)
+            
+            r_kills = kills - (p_unpacked.kills if p_unpacked and not gamelog else 0)
+            r_deaths = deaths - (p_unpacked.deaths if p_unpacked and not gamelog else 0)
+            
             r_spawn_count = spawn_count - (int(p_prev_data.get("spawn_count") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
             
             # Stances and Distance deltas
@@ -660,15 +717,15 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             r_prone = prone - (int((p_prev_data.get("stance_stats_seconds") or {}).get("in_prone") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
             r_lean = lean - (int((p_prev_data.get("stance_stats_seconds") or {}).get("in_lean") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
 
-            eff_round, kdr_round = _eff_kdr(kills, deaths, r_sk) # kills/deaths are already round-specific
+            eff_round, kdr_round = _eff_kdr(r_kills, r_deaths, r_sk)
 
             pms_round = PlayerMatchStats(
                 match_id=match_row.id,
                 player_id=player.id,
                 round_index=round_index,
                 team=team, # Use the round-specific team, not the match-accumulated one
-                kills=kills, # round-specific
-                deaths=deaths, # round-specific
+                kills=r_kills,
+                deaths=r_deaths,
                 kdr=kdr_round,
                 eff=eff_round,
                 unified_eff=u_eff,
@@ -684,8 +741,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 time_played_pct=tpct - (p_unpacked.time_played_pct if p_unpacked else 0.0),
                 xp=r_xp,
                 revives=r_revives,
-                medkits=medkits,
-                team_medpacks=ammo_packs,
+                medkits=r_medkits,
+                team_medpacks=r_ammo_packs,
                 spam_kills=spam_kills, # round-specific
                 distance_travelled_meters=r_dist_m,
                 distance_travelled_spawn_avg=dist_sa, # session-avg typically
@@ -705,6 +762,11 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             
             # Store current state for next round's delta
             if unpacked:
+                unpacked.kills = kills
+                unpacked.deaths = deaths
+                unpacked.revives = revives
+                unpacked.medkits = medkits
+                unpacked.ammopacks = ammo_packs
                 setattr(unpacked, "pdata_ref", pdata) # hack to store raw pdata for numeric deltas
                 prev_unpacked_by_guid[guid] = unpacked
 
@@ -731,9 +793,9 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             if gamelog:
                 ts.kills += em.kills
                 ts.deaths += em.deaths
-                ts.revives += em.revives
-                ts.medkits += em.team_medpacks
-                ts.team_medpacks += em.team_ammopacks # Now Ammo
+                ts.revives += revives # Use the corrected 'revives'
+                ts.medkits += medkits # Use the corrected 'medkits'
+                ts.team_medpacks += ammo_packs # Use the corrected 'ammo_packs'
                 ts.headshots += em.headshot_hits
                 ts.headshot_hits += em.headshot_hits
                 ts.shots_recorded += em.shots_recorded
@@ -778,7 +840,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             deaths=ts.deaths,
             kdr=kdr,
             eff=eff,
-            unified_eff=_calculate_unified_eff(ts.kills, ts.revives, ts.team_medpacks + ts.medkits, ts.xp, ts.deaths, ts.self_kills),
+            unified_eff=_calculate_unified_eff(ts.kills, ts.revives, ts.damage_given, ts.xp, ts.deaths, ts.self_kills),
             damage_given=ts.damage_given,
             damage_received=ts.damage_received,
             team_damage_given=ts.team_damage_given,
@@ -831,8 +893,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 team=ts.team,
                 xp=float(ts.xp),
                 kills=ts.kills,
+                damage_given=ts.damage_given,
                 revives=float(ts.revives),
-                ammo_packs=ts.team_medpacks,
                 deaths=ts.deaths,
                 self_kills=ts.self_kills,
                 mu=mu,
@@ -872,8 +934,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         perf = next((p for p in performances if p.player_id == res.player_id), None)
         if perf:
             # MVP Score matches the new get_score logic roughly
-            tactical_eff = ((perf.kills + perf.revives) / max(1, perf.kills + perf.revives + perf.deaths + perf.self_kills)) * 100.0
-            score = (tactical_eff * 0.7) + (min(100.0, perf.xp / 3.0) * 0.3)
+            tactical_eff = ((perf.kills + perf.revives + (perf.damage_given / 100.0)) / max(1, perf.kills + perf.revives + (perf.damage_given / 100.0) + perf.deaths + perf.self_kills)) * 100.0
+            score = (tactical_eff * 0.85) + (min(100.0, perf.xp * 0.15))
             
             if winner_team > 0 and perf.team == winner_team:
                 score += 0.01
@@ -952,8 +1014,8 @@ def recalculate_all_ratings(db: Session):
                 team=row.team,
                 xp=float(row.xp),
                 kills=row.kills,
+                damage_given=row.damage_given,
                 revives=row.revives,
-                ammo_packs=row.team_medpacks,
                 deaths=row.deaths,
                 self_kills=row.self_kills,
                 mu=gr.mu,

@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom'
-import { OverviewTab, MatchesTab, LeaderboardsTab, PlayersTab, BalancingTab } from './pages/Dashboard'
+import { Overview } from './pages/Overview'
+import { Matches } from './pages/Matches'
+import { Leaderboards } from './pages/Leaderboards'
+import { Players } from './pages/Players'
+import { Balancing } from './pages/Balancing'
 import { MatchDetail } from './pages/MatchDetail'
 import { PlayerProfile } from './pages/PlayerProfile'
 import { HowItWorks } from './pages/HowItWorks'
@@ -27,10 +31,15 @@ function Layout({ children }: { children: ReactNode }) {
     <div className="min-h-screen">
       <nav className="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur sticky top-0 z-10 w-full">
         <div className="mx-auto flex flex-col md:flex-row max-w-7xl items-center justify-between px-4 pt-3 md:pb-0 gap-4">
-          <div className="flex items-center gap-4 md:mb-3">
-            <Link to="/" className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              <span className="bg-gradient-to-tr from-violet-500 to-fuchsia-500 inline-block w-4 h-4 rounded-sm shadow-[0_0_10px_rgba(139,92,246,0.3)]" />
-              RTCW: ET Israel Stats
+          <div className="flex items-center gap-8">
+            <Link to="/" className="flex items-center gap-2 group">
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-black text-white group-hover:bg-indigo-500 transition-colors shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+                ETL
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-black tracking-tighter text-white">STATS</span>
+                <span className="text-[10px] font-bold text-indigo-400/80 -mt-1 tracking-widest">v2026.4.4.2</span>
+              </div>
             </Link>
           </div>
           <div className="flex space-x-1 overflow-x-auto w-full md:w-auto scrollbar-hide">
@@ -57,11 +66,11 @@ export default function App() {
     <BrowserRouter>
       <Layout>
         <Routes>
-          <Route path="/" element={<OverviewTab />} />
-          <Route path="/matches" element={<MatchesTab />} />
-          <Route path="/leaderboards" element={<LeaderboardsTab />} />
-          <Route path="/search" element={<PlayersTab />} />
-          <Route path="/balancing" element={<BalancingTab />} />
+          <Route path="/" element={<Overview />} />
+          <Route path="/matches" element={<Matches />} />
+          <Route path="/leaderboards" element={<Leaderboards />} />
+          <Route path="/search" element={<Players />} />
+          <Route path="/balancing" element={<Balancing />} />
           <Route path="/how-it-works" element={<HowItWorks />} />
           <Route path="/match/:id" element={<MatchDetail />} />
           <Route path="/player/:guid" element={<PlayerProfile />} />

@@ -1,3 +1,18 @@
+export type WeaponPerformance = {
+  name: string;
+  hits: number;
+  shots: number;
+  kills: number;
+  deaths: number;
+  headshots: number;
+  accuracy: number | null;
+}
+
+export type ClassPlayed = {
+  toClass: string;
+  seconds: number;
+}
+
 export type MatchSummary = {
   id: number
   match_id: string
@@ -36,14 +51,14 @@ export type PlayerRow = {
   crouched_seconds?: number
   proned_seconds?: number
   leaned_seconds?: number
-  classes_played?: any[]
+  classes_played?: ClassPlayed[]
 
   time_played_pct: number
   team_kills: number
   team_damage_given: number
   team_gibs: number
   self_kills: number
-  weapon_breakdown: any[] | null
+  weapon_breakdown: WeaponPerformance[] | null
 }
 
 export type MatchRivalry = {
@@ -62,12 +77,18 @@ export type MatchDetail = {
   allies_round1?: PlayerRow[] | null
   axis_round2?: PlayerRow[] | null
   allies_round2?: PlayerRow[] | null
+  round1_alpha_side?: number | null
+  round2_alpha_side?: number | null
   rivalry: MatchRivalry | null
 }
 
-export async function fetchMatches(mapname?: string): Promise<MatchSummary[]> {
-  const url = mapname ? `/api/matches?mapname=${encodeURIComponent(mapname)}` : '/api/matches'
-  const r = await fetch(url)
+export async function fetchMatches(mapname?: string, skip: number = 0, limit: number = 20): Promise<MatchSummary[]> {
+  const params = new URLSearchParams()
+  params.set('skip', skip.toString())
+  params.set('limit', limit.toString())
+  if (mapname) params.set('mapname', mapname)
+  
+  const r = await fetch(`/api/matches?${params.toString()}`)
   if (!r.ok) throw new Error('failed to load matches')
   return r.json()
 }
@@ -85,7 +106,7 @@ export type PlayerProfile = {
   current_rating: number
   mvp_count?: number
   rating_history: { match_id: number; rating: number; delta: number; recorded_at: string }[]
-  top_weapons: { name: string; hits: number; shots: number; kills: number; accuracy_pct: number | null }[]
+  top_weapons: WeaponPerformance[]
   nemesis?: {
     killed_most: { guid: string; count: number; name: string }[]
     killed_by_most: { guid: string; count: number; name: string }[]
@@ -117,8 +138,8 @@ export type PlayerProfile = {
   class_stats?: Record<string, number>
 }
 
-export async function fetchPlayer(guid: string): Promise<PlayerProfile> {
-  const r = await fetch(`/api/players/${encodeURIComponent(guid)}`)
+export async function fetchPlayer(guid: string, skip: number = 0, limit: number = 20): Promise<PlayerProfile> {
+  const r = await fetch(`/api/players/${encodeURIComponent(guid)}?skip=${skip}&limit=${limit}`)
   if (!r.ok) throw new Error('player not found')
   return r.json()
 }
@@ -141,7 +162,7 @@ export async function fetchStatsOverview(): Promise<StatsOverview> {
   return r.json()
 }
 
-export type LeaderboardEntry = { guid: string; display_name: string; val: number }
+export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number }
 export type Leaderboards = {
   openskill: LeaderboardEntry[]
   medic: LeaderboardEntry[]
@@ -156,6 +177,8 @@ export type BalanceResponse = {
   beta_avg_sr: number
   diff: number
 }
+
+export type LivePlayer = { slot: number; name: string; team: string; guid: string; rating: number }
 
 export async function fetchLeaderboards(): Promise<Leaderboards> {
   const r = await fetch('/api/players/leaderboards')
@@ -180,4 +203,11 @@ export async function balanceTeams(playerIdentifiers: string[]): Promise<Balance
     throw new Error(err.detail || 'failed to balance teams')
   }
   return r.json()
+}
+
+export async function fetchLivePlayers(): Promise<LivePlayer[]> {
+  const r = await fetch('/api/server/players')
+  if (!r.ok) throw new Error('failed to fetch live players')
+  const data = await r.json()
+  return data.players
 }

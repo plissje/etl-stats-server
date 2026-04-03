@@ -22,5 +22,9 @@ class Settings(BaseSettings):
         "http://localhost:5180"
     )
 
+    rcon_host: str = "127.0.0.1"
+    rcon_port: int = 27960
+    rcon_password: str = "dev-rcon-password"
+
 
 settings = Settings()

@@ -61,7 +61,7 @@ export function HowItWorks() {
             <div className="flex justify-between items-center mb-2 pb-2 border-b border-zinc-800">
               <span className="text-zinc-500 uppercase tracking-tighter">Contribution Formula</span>
             </div>
-            <div className="text-fuchsia-400 text-base py-2">
+            <div className="text-fuchsia-400 text-base py-2 font-bold tracking-tight">
               UE = (Points / (Points + Deaths + SelfKills)) * 100
             </div>
           </div>
@@ -77,9 +77,9 @@ export function HowItWorks() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: 'Kill', value: '1.0 pt', icon: <Crosshair className="text-red-400" />, desc: 'Fragging power' },
-            { label: 'Revive', value: '1.0 pt', icon: <Star className="text-blue-400" />, desc: 'Parity with kills' },
-            { label: 'Ammo Pack', value: '0.25 pt', icon: <Zap className="text-amber-400" />, desc: 'Per pack dropped' },
-            { label: 'Objective XP', value: '0.10 pt', icon: <Shield className="text-emerald-400" />, desc: 'Per 1 XP earned' },
+            { label: 'Revive', value: '0.33 pt', icon: <Star className="text-blue-400" />, desc: 'Supporting teammates' },
+            { label: 'Damage', value: '1.0 pt', icon: <Zap className="text-amber-400" />, desc: 'Per 100 Damage Given' },
+            { label: 'Objective XP', value: '0.10 pt', icon: <Shield className="text-emerald-400" />, desc: 'Engineering & Plants' },
           ].map((item, i) => (
             <div key={i} className="p-6 bg-zinc-900/30 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors">
               <div className="flex items-center justify-between mb-4">
@@ -104,7 +104,7 @@ export function HowItWorks() {
               Why this system?
             </h3>
             <p className="text-zinc-400 leading-relaxed">
-              In base Wolfenstein: ET, medics and engineers often have low K/Ds but win the game. By giving a <strong className="text-violet-400">Revive the same weight as a Kill</strong>, and rewarding objective progression via XP, we ensure the standings reflect the players who actually carry their teams to victory.
+              In base Wolfenstein: ET, medics and engineers often have low K/Ds but win the game. By giving a <strong className="text-violet-400">Revive a 0.33 weight</strong>, and rewarding objective progression via XP, we ensure the standings reflect the players who actually carry their teams to victory while still rewarding support play.
             </p>
           </div>
           <div className="p-8 bg-zinc-900/20 border-l-4 border-fuchsia-500 rounded-lg">
@@ -115,6 +115,21 @@ export function HowItWorks() {
             <p className="text-zinc-400 leading-relaxed">
               The Most Valuable Player (MVP) is awarded automatically to the player with the highest <strong className="text-fuchsia-400">Performance Score</strong> in a match. This score is heavily weighted toward the winning team, but an exceptional performance on the losing side can still earn the medal.
             </p>
+          </div>
+          <div className="bg-zinc-900/40 border border-fuchsia-500/20 p-8 rounded-2xl">
+            <h3 className="text-xl font-bold text-white mb-4">The 80/20 Competitive Rule</h3>
+            <p className="text-zinc-400 leading-relaxed mb-6">
+              In scramble-based gathers, "Team Win" can sometimes be lucky. To fix this, we split each match:
+              <strong className="text-fuchsia-400"> 80%</strong> individual performance vs team avg, and 
+              <strong className="text-fuchsia-400"> 20%</strong> overall team result.
+            </p>
+            <div className="p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl">
+              <p className="text-xs text-fuchsia-200 uppercase tracking-widest font-bold mb-1">Carry Shield Activated</p>
+              <p className="text-sm text-fuchsia-100/80">
+                A <span className="font-bold text-white italic">3.0x Sensitivity</span> multiplier is applied to your individual contribution. 
+                If you are carrying your team, your SR will rise even on a loss.
+              </p>
+            </div>
           </div>
         </div>
         
@@ -128,7 +143,7 @@ export function HowItWorks() {
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />
-              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">40% Team Bonus</span>. It is almost always better to win the game than to hunt for extra kills.</p>
+              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">20% Team Result</span>. It is still better to win the game, but your personal impact is the primary driver of your rank.</p>
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />
