@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve `.env` next to the `backend/` package root (not the process cwd).
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
-_ENV_FILE = _BACKEND_ROOT / ".env"
+_ENV_FILE = _BACKEND_ROOT.parent / ".env"
 
 
 class Settings(BaseSettings):
