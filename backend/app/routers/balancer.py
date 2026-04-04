@@ -8,8 +8,12 @@ from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/balancer", tags=["balancer"])
 
+class PlayerIdentity(BaseModel):
+    guid: str
+    name: str
+
 class BalanceRequest(BaseModel):
-    player_identifiers: List[str]  # Can be GUIDs or exact names
+    players: List[PlayerIdentity]
 
 class TeamPlayer(BaseModel):
     guid: str
@@ -25,48 +29,40 @@ class BalanceResponse(BaseModel):
 
 @router.post("/balance", response_model=BalanceResponse)
 def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
-    if not req.player_identifiers:
+    if not req.players:
         raise HTTPException(status_code=400, detail="No players provided")
     
-    # 1. Fetch players and their ratings
-    # We support both GUIDs and names for flexibility (especially for manual paste)
+    # 1. Fetch ratings from DB using the GUIDs
+    guids = [p.guid for p in req.players]
+    names = [p.name for p in req.players] # For name-based resolution fallback
+    
     found_players = (
-        db.query(Player, PlayerGatherRating.current_rating)
+        db.query(Player.guid, Player.display_name, PlayerGatherRating.current_rating)
         .outerjoin(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
         .filter(or_(
-            Player.guid.in_(req.player_identifiers),
-            Player.display_name.in_(req.player_identifiers)
+            Player.guid.in_(guids),
+            Player.display_name.in_(names)
         ))
         .all()
     )
     
-    # Map found players for easy lookup
-    found_map = {}
-    for p, rating in found_players:
-        found_map[p.guid] = (p.display_name, rating or 1500.0)
-        found_map[p.display_name] = (p.display_name, rating or 1500.0)
-
-    # Combine with original request to include everyone
-    team_players = []
-    seen_guids = set()
+    # Map found ratings for lookup
+    db_data = {} # guid/name -> rating
+    for guid, display_name, rating in found_players:
+        if guid: db_data[guid] = rating or 1500.0
+        if display_name: db_data[display_name] = rating or 1500.0
     
-    for identifier in req.player_identifiers:
-        if identifier in found_map:
-            name, rating = found_map[identifier]
-            # Avoid duplicates if both GUID and Name were provided for same player
-            # (Though in practice we just use what's provided)
-            team_players.append(TeamPlayer(
-                guid=identifier,
-                name=name,
-                rating=rating
-            ))
-        else:
-            # Not found in DB, use default name and SR
-            team_players.append(TeamPlayer(
-                guid=identifier,
-                name=identifier,
-                rating=1500.0
-            ))
+    # Process each player from the request, prioritizing the provided name
+    team_players = []
+    for p in req.players:
+        # Check rating: Try GUID first, then Name fallback
+        rating = db_data.get(p.guid) or db_data.get(p.name) or 1500.0
+        
+        team_players.append(TeamPlayer(
+            guid=p.guid,
+            name=p.name, # ALWAYS use the name provided in the request
+            rating=rating
+        ))
     
     if not team_players:
         raise HTTPException(status_code=400, detail="No players to balance")

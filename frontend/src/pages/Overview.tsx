@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { fetchStatsOverview, type StatsOverview } from '../api'
+import { MatchHistoryChart } from '../components/MatchHistoryChart'
 
 export function Overview() {
+  const navigate = useNavigate()
   const [stats, setStats] = useState<StatsOverview | null>(null)
   const [err, setErr] = useState('')
 
@@ -123,7 +125,11 @@ export function Overview() {
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
                 {stats.recent_matches.map((m) => (
-                  <tr key={m.id} className="hover:bg-zinc-800/30 transition group">
+                  <tr 
+                    key={m.id} 
+                    onClick={() => navigate(`/match/${m.id}`)}
+                    className="hover:bg-zinc-800/30 transition group cursor-pointer"
+                  >
                     <td className="px-4 py-3">
                       <div className="text-zinc-300 font-medium group-hover:text-violet-400 transition">{m.mapname}</div>
                       <div className="text-[10px] text-zinc-600 font-mono">{m.match_id.slice(0, 8)}</div>
@@ -137,9 +143,9 @@ export function Overview() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link to={`/match/${m.id}`} className="text-zinc-600 hover:text-zinc-100 transition inline-block translate-x-0 group-hover:translate-x-1">
+                      <div className="text-zinc-600 group-hover:text-zinc-100 transition inline-block translate-x-0 group-hover:translate-x-1">
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -151,25 +157,19 @@ export function Overview() {
         <div className="space-y-4">
           <h3 className="text-lg font-medium text-zinc-100 flex items-center gap-2">
             <span className="w-1.5 h-6 bg-blue-500 rounded-full inline-block" />
-            Global Performance
+            Deployment Activity
           </h3>
-          {/* Placeholder for now, could be top damage dealers or similar */}
-          <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-4 min-h-[300px]">
-            <div className="w-16 h-16 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-               <svg className="w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-            </div>
-            <div>
-              <div className="text-zinc-300 font-medium">Aggregated Combat Data</div>
-              <div className="text-sm text-zinc-500 max-w-xs mx-auto">This section tracks cumulative performance across all operational theaters.</div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 w-full pt-4">
-               <div className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-700/30">
-                  <div className="text-[10px] text-zinc-500 uppercase font-bold">KDR Ratio</div>
-                  <div className="text-xl font-mono text-zinc-200">{(stats.total_kills / (stats.total_matches * 10 || 1)).toFixed(2)}</div>
+          <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-6">
+            <MatchHistoryChart data={stats.matches_by_day} />
+            
+            <div className="grid grid-cols-2 gap-4 w-full pt-6 border-t border-zinc-800/40 mt-8">
+               <div className="bg-zinc-800/20 p-3 rounded-lg border border-zinc-800/40">
+                  <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Avg Kills / Player</div>
+                  <div className="text-xl font-mono text-zinc-200">{(stats.total_kills / (stats.total_performances || 1)).toFixed(1)}</div>
                </div>
-               <div className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-700/30">
-                  <div className="text-[10px] text-zinc-500 uppercase font-bold">Dmg/Match</div>
-                  <div className="text-xl font-mono text-zinc-200">{Math.round(stats.total_damage / (stats.total_matches || 1)).toLocaleString()}</div>
+               <div className="bg-zinc-800/20 p-3 rounded-lg border border-zinc-800/40">
+                  <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Avg Dmg / Player</div>
+                  <div className="text-xl font-mono text-zinc-200">{Math.round(stats.total_damage / (stats.total_performances || 1)).toLocaleString()}</div>
                </div>
             </div>
           </div>

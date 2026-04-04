@@ -1,9 +1,21 @@
--- live_balancer.lua (v2.0 - Chunked Compact Method)
+-- live_balancer.lua (v3.1 - 10-Chunk Compact Method)
 et.RegisterModname("Live Balancer API")
 
-function strip_colors(text)
+function sanitize_name(text)
     if not text then return "" end
-    return string.gsub(text, "%^%d", "")
+    local s = string.gsub(text, "%^.", "") -- Strip ALL color codes (^1, ^s, etc.)
+    s = string.gsub(s, "|", " ")            -- Strip delims
+    s = string.gsub(s, ";", " ")            -- Strip delims
+    s = string.gsub(s, '"', "'")            -- Replace double quotes with single
+    s = string.gsub(s, ",", " ")            -- Strip commas
+    return string.strip(s) or s
+end
+
+-- Polyfill for older Lua versions if needed
+if not string.strip then
+    function string.strip(s)
+        return s:match("^%s*(.-)%s*$")
+    end
 end
 
 function et_ConsoleCommand()
@@ -12,49 +24,59 @@ function et_ConsoleCommand()
         local players = {}
         local maxclients = tonumber(et.trap_Cvar_Get("sv_maxclients")) or 64
         
+        -- Reset all 10 CVARs first to avoid stale data from previous calls
+        for i=1, 10 do
+            et.trap_Cvar_Set("etl_live_api_" .. i, "")
+        end
+
         for i=0, maxclients-1 do
             local team = tonumber(et.gentity_get(i, "sess.sessionTeam"))
+            -- Include Axis (1), Allies (2), and Spectator (3)
             if team and (team >= 1 and team <= 3) then
                 local userinfo = et.trap_GetUserinfo(i)
                 if userinfo ~= "" then
-                    local name = et.Info_ValueForKey(userinfo, "name")
+                    local name = et.gentity_get(i, "pers.netname")
+                    if not name or name == "" or name == "default:" then
+                        name = et.Info_ValueForKey(userinfo, "name")
+                    end
                     local guid = et.Info_ValueForKey(userinfo, "cl_guid")
                     if not guid or guid == "" then
                         guid = et.Info_ValueForKey(userinfo, "guid")
                     end
                     
                     if name and name ~= "" and guid and guid ~= "" then
-                        -- COMPACT FORMAT: s|g|t|n;
-                        local clean_name = strip_colors(name)
-                        -- Replace delimiters to avoid formatting breakage
-                        clean_name = string.gsub(clean_name, "|", " ")
-                        clean_name = string.gsub(clean_name, ";", " ")
-                        
+                        local clean_name = sanitize_name(name)
+                        -- Format: slot|guid|team|name
                         table.insert(players, string.format('%d|%s|%d|%s', i, guid, team, clean_name))
                     end
                 end
             end
         end
         
-        -- CHUNKING: Split into 2 chunks of 15 players each (30 total)
-        local chunk1 = {}
-        local chunk2 = {}
-        for idx, p in ipairs(players) do
-            if idx <= 15 then
-                table.insert(chunk1, p)
-            else
-                table.insert(chunk2, p)
+        -- CHUNKING: Split into 10 chunks of 4 players each (40 total)
+        -- Smaller chunks are much safer for CVAR string limits (usually < 1024)
+        local players_per_chunk = 4
+        for chunk_idx = 1, 10 do
+            local chunk_data = {}
+            local start_idx = (chunk_idx - 1) * players_per_chunk + 1
+            local end_idx = chunk_idx * players_per_chunk
+            
+            for p_idx = start_idx, end_idx do
+                if players[p_idx] then
+                    table.insert(chunk_data, players[p_idx])
+                end
+            end
+            
+            if #chunk_data > 0 then
+                et.trap_Cvar_Set("etl_live_api_" .. chunk_idx, table.concat(chunk_data, ";"))
             end
         end
         
-        et.trap_Cvar_Set("etl_live_api_1", table.concat(chunk1, ";"))
-        et.trap_Cvar_Set("etl_live_api_2", table.concat(chunk2, ";"))
-        
-        print("\nAPI_PLAYERS_SYNC_COMPLETE - v2.0\n")
+        print("\nAPI_PLAYERS_SYNC_COMPLETE - v3.1 (10 Chunks)\n")
         return 1
     end
     return 0
 end
 
-print("[Live API] LOADED - version 2.0 (Chunked Compact)")
-et.trap_SendConsoleCommand(et.EXEC_APPEND, "say Live Balancer API v2.0 Loaded (Chunked)\n")
+print("[Live API] LOADED - version 3.1")
+et.trap_SendConsoleCommand(et.EXEC_APPEND, "say Live Balancer API v3.1\n")

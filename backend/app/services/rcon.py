@@ -7,6 +7,7 @@ class RconProtocol(asyncio.DatagramProtocol):
         self.on_con_lost = on_con_lost
         self.transport = None
         self.response = b""
+        self.packet_received = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -16,6 +17,7 @@ class RconProtocol(asyncio.DatagramProtocol):
         # Every Quake 3 RCON packet starts with \xff\xff\xff\xffprint\n
         # (or \xff\xff\xff\xffstatusResponse\n for unauthenticated getstatus)
         print(f"DEBUG: Received RCON packet ({len(data)} bytes) from {addr}")
+        self.packet_received = True
         if data.startswith(b"\xff\xff\xff\xffprint\n"):
             self.response += data[10:]
         elif data.startswith(b"\xff\xff\xff\xff"):
@@ -54,8 +56,8 @@ async def send_rcon_command(command: str, timeout: float = 2.0) -> str:
                 last_response_len = 0
                 while True:
                     await asyncio.sleep(0.1)
-                    # If we have some data and it hasn't changed for 100ms, assume we're done
-                    if len(protocol.response) > 0 and len(protocol.response) == last_response_len:
+                    # If we have received a packet and data hasn't changed for 100ms, assume we're done
+                    if protocol.packet_received and len(protocol.response) == last_response_len:
                         break
                     # If we've waited but still have no data, continue until timeout
                     last_response_len = len(protocol.response)

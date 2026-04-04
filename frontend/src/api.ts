@@ -147,6 +147,7 @@ export async function fetchPlayer(guid: string, skip: number = 0, limit: number 
 export type StatsOverview = {
   total_matches: number
   total_players: number
+  total_performances: number
   top_maps: { mapname: string; count: number }[]
   top_players: { name: string; guid: string; rating: number }[]
   top_mvps: { name: string; guid: string; count: number }[]
@@ -154,6 +155,7 @@ export type StatsOverview = {
   total_kills: number
   total_damage: number
   total_time_played_s: number
+  matches_by_day: { day: string; count: number }[]
 }
 
 export async function fetchStatsOverview(): Promise<StatsOverview> {
@@ -178,7 +180,7 @@ export type BalanceResponse = {
   diff: number
 }
 
-export type LivePlayer = { slot: number; name: string; team: string; guid: string; rating: number }
+export type LivePlayer = { slot: number; name: string; team: string; guid: string; rating: number; main_role: string }
 
 export async function fetchLeaderboards(): Promise<Leaderboards> {
   const r = await fetch('/api/players/leaderboards')
@@ -192,17 +194,17 @@ export async function searchPlayers(q: string = ''): Promise<LeaderboardEntry[]>
   return r.json()
 }
 
-export async function balanceTeams(playerIdentifiers: string[]): Promise<BalanceResponse> {
-  const r = await fetch('/api/balancer/balance', {
+export async function balanceTeams(players: { guid: string, name: string }[]): Promise<BalanceResponse> {
+  const response = await fetch('/api/balancer/balance', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ player_identifiers: playerIdentifiers })
+    body: JSON.stringify({ players })
   })
-  if (!r.ok) {
-    const err = await r.json()
-    throw new Error(err.detail || 'failed to balance teams')
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to balance teams')
   }
-  return r.json()
+  return response.json()
 }
 
 export async function fetchLivePlayers(): Promise<LivePlayer[]> {

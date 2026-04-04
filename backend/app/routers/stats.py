@@ -92,9 +92,38 @@ def stats_overview(db: Session = Depends(get_db)) -> dict:
     # Total Damage
     total_damage = db.query(func.sum(PlayerMatchStats.damage_given)).filter(PlayerMatchStats.round_index == 0).scalar() or 0
 
+    # Matches by Day (last 30 days)
+    from datetime import datetime, timedelta
+    thirty_days_ago = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30)
+    thirty_days_ago_unix = int(thirty_days_ago.timestamp())
+    
+    matches_by_day_query = (
+        db.query(
+            func.date(func.datetime(Match.round_start_unix, 'unixepoch')).label("day"), 
+            func.count(Match.id).label("count")
+        )
+        .filter(Match.round_start_unix >= thirty_days_ago_unix)
+        .group_by(func.date(func.datetime(Match.round_start_unix, 'unixepoch')))
+        .all()
+    )
+    
+    # Fill in zeros for days with no matches
+    matches_map = {day: count for day, count in matches_by_day_query}
+    matches_by_day = []
+    for i in range(31):
+        day_date = (thirty_days_ago + timedelta(days=i)).date().isoformat()
+        matches_by_day.append({
+            "day": day_date,
+            "count": matches_map.get(day_date, 0)
+        })
+
+    # Total Performaces (Player-Match summaries)
+    total_performances = db.query(func.count(PlayerMatchStats.id)).filter(PlayerMatchStats.round_index == 0).scalar() or 0
+
     return {
         "total_matches": total_matches,
         "total_players": total_players,
+        "total_performances": total_performances,
         "top_maps": top_maps,
         "top_players": top_players,
         "top_mvps": top_mvps,
@@ -102,4 +131,5 @@ def stats_overview(db: Session = Depends(get_db)) -> dict:
         "total_kills": int(total_kills),
         "total_damage": int(total_damage),
         "total_time_played_s": total_time_played_s,
+        "matches_by_day": matches_by_day,
     }

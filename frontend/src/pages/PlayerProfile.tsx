@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useNavigate, useParams, Link } from 'react-router-dom'
 import {
   Line,
   LineChart,
@@ -30,6 +30,7 @@ import { fetchPlayer, type PlayerProfile as Profile } from '../api'
 import { QuakeName } from '../components/QuakeName'
 
 export function PlayerProfile() {
+  const navigate = useNavigate()
   const { guid } = useParams<{ guid: string }>()
   const [p, setP] = useState<Profile | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -179,7 +180,11 @@ export function PlayerProfile() {
                   {p.match_history?.map(m => {
                     const won = m.team === m.winner_team;
                     return (
-                      <tr key={m.id} className="hover:bg-white/[0.03] transition-colors group/row">
+                      <tr 
+                        key={m.id} 
+                        onClick={() => navigate(`/match/${m.id}`)}
+                        className="hover:bg-white/[0.03] transition-colors group/row cursor-pointer"
+                      >
                         <td className="px-8 py-5 font-bold text-zinc-300 flex items-center gap-3">
                           <span className="w-1.5 h-1.5 rounded-full bg-zinc-800 group-hover/row:bg-violet-500 transition" />
                           {m.mapname}
