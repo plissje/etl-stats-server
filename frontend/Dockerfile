@@ -3,6 +3,16 @@ FROM node:20-slim AS build
 
 WORKDIR /app
 
+# Build arguments for Vite/Nginx environment
+ARG VITE_BALANCER_PASSWORD
+ARG VITE_API_PROXY
+ARG VITE_API_PROXY_HOST
+
+# Map build arguments to environment variables for npm run build
+ENV VITE_BALANCER_PASSWORD=$VITE_BALANCER_PASSWORD
+ENV VITE_API_PROXY=$VITE_API_PROXY
+ENV VITE_API_PROXY_HOST=$VITE_API_PROXY_HOST
+
 COPY package*.json ./
 RUN npm install
 

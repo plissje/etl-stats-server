@@ -23,6 +23,10 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - VITE_BALANCER_PASSWORD=${VITE_BALANCER_PASSWORD}
+        - VITE_API_PROXY=${VITE_API_PROXY:-/api}
+        - VITE_API_PROXY_HOST=${VITE_API_PROXY_HOST:-http://backend:8000}
     container_name: etl-stats-frontend
     restart: unless-stopped
     depends_on:

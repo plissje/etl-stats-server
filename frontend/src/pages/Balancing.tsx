@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   searchPlayers, balanceTeams, fetchLivePlayers,
-  type LeaderboardEntry, type BalanceResponse 
+  type LeaderboardEntry, type BalanceResponse, type PlayerIdentifier
 } from '../api'
 import { QuakeName } from '../components/QuakeName'
 
@@ -60,7 +60,7 @@ export function Balancing() {
         ? selectedPlayers.filter(p => !p.team || p.team !== 'Spectator')
         : selectedPlayers
         
-    const allPlayers = [
+    const allPlayers: PlayerIdentifier[] = [
         ...activeSelected.map(p => ({ guid: p.id, name: p.name })),
         ...manualLines.map(line => ({ guid: line, name: line }))
     ]

@@ -165,6 +165,7 @@ export async function fetchStatsOverview(): Promise<StatsOverview> {
 }
 
 export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number }
+export type PlayerIdentifier = { guid: string; name: string }
 export type Leaderboards = {
   openskill: LeaderboardEntry[]
   medic: LeaderboardEntry[]
@@ -194,7 +195,7 @@ export async function searchPlayers(q: string = ''): Promise<LeaderboardEntry[]>
   return r.json()
 }
 
-export async function balanceTeams(players: { guid: string, name: string }[]): Promise<BalanceResponse> {
+export async function balanceTeams(players: PlayerIdentifier[]): Promise<BalanceResponse> {
   const response = await fetch('/api/balancer/balance', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
