@@ -235,9 +235,9 @@ async def move_players(req: BatchMoveRequest):
     
     tasks = []
     for move in req.moves:
-        # ET Legacy / Q3 RCON: putteam <id> r/b/s
-        team_id = "r" if move.team == "Axis" else "b"
-        cmd = f"putteam {move.slot} {team_id}"
+        # User feedback: putteam doesn't work, use ref putaxis/putallies
+        sub_cmd = "putaxis" if move.team == "Axis" else "putallies"
+        cmd = f"ref {sub_cmd} {move.slot}"
         tasks.append(send_rcon_command(cmd))
     
     try:
