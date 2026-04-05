@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/balancer", tags=["balancer"])
 class PlayerIdentity(BaseModel):
     guid: str
     name: str
+    slot: Optional[int] = None
 
 class BalanceRequest(BaseModel):
     players: List[PlayerIdentity]
@@ -19,6 +20,7 @@ class TeamPlayer(BaseModel):
     guid: str
     name: str
     rating: float
+    slot: Optional[int] = None
 
 class BalanceResponse(BaseModel):
     alpha: List[TeamPlayer]
@@ -61,7 +63,8 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
         team_players.append(TeamPlayer(
             guid=p.guid,
             name=p.name, # ALWAYS use the name provided in the request
-            rating=rating
+            rating=rating,
+            slot=p.slot
         ))
     
     if not team_players:

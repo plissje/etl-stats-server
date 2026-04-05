@@ -24,6 +24,18 @@ class ServerPlayer(BaseModel):
 class PlayerListResponse(BaseModel):
     players: List[ServerPlayer]
     count: int
+    
+class PlayerMove(BaseModel):
+    slot: int
+    team: str # "Axis" or "Allies"
+
+class BatchMoveRequest(BaseModel):
+    moves: List[PlayerMove]
+
+class MoveResponse(BaseModel):
+    success: bool
+    commands_sent: int
+    details: str
 
 @router.get("/players", response_model=PlayerListResponse)
 async def get_players(db: Session = Depends(get_db)):
@@ -215,3 +227,26 @@ async def get_players(db: Session = Depends(get_db)):
         players=final_players,
         count=len(final_players)
     )
+
+@router.post("/move-players", response_model=MoveResponse)
+async def move_players(req: BatchMoveRequest):
+    if not req.moves:
+        return MoveResponse(success=True, commands_sent=0, details="No moves requested")
+    
+    tasks = []
+    for move in req.moves:
+        # ET Legacy / Q3 RCON: putteam <id> r/b/s
+        team_id = "r" if move.team == "Axis" else "b"
+        cmd = f"putteam {move.slot} {team_id}"
+        tasks.append(send_rcon_command(cmd))
+    
+    try:
+        # Execute all moves in parallel
+        await asyncio.gather(*tasks)
+        return MoveResponse(
+            success=True, 
+            commands_sent=len(req.moves), 
+            details=f"Successfully issued {len(req.moves)} movement commands."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RCON move failed: {str(e)}")

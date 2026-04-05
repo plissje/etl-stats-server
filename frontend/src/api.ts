@@ -165,14 +165,14 @@ export async function fetchStatsOverview(): Promise<StatsOverview> {
 }
 
 export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number }
-export type PlayerIdentifier = { guid: string; name: string }
+export type PlayerIdentifier = { guid: string; name: string; slot?: number }
 export type Leaderboards = {
   openskill: LeaderboardEntry[]
   medic: LeaderboardEntry[]
   sharpshooter: LeaderboardEntry[]
 }
 
-export type BalancePlayer = { guid: string; name: string; rating: number }
+export type BalancePlayer = { guid: string; name: string; rating: number; slot?: number }
 export type BalanceResponse = {
   alpha: BalancePlayer[]
   beta: BalancePlayer[]
@@ -213,4 +213,17 @@ export async function fetchLivePlayers(): Promise<LivePlayer[]> {
   if (!r.ok) throw new Error('failed to fetch live players')
   const data = await r.json()
   return data.players
+}
+
+export async function movePlayersToTeams(moves: { slot: number, team: string }[]): Promise<{ success: boolean, details: string }> {
+  const response = await fetch('/api/server/move-players', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moves })
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to move players')
+  }
+  return response.json()
 }

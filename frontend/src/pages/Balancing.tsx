@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
-  searchPlayers, balanceTeams, fetchLivePlayers,
+  searchPlayers, balanceTeams, fetchLivePlayers, movePlayersToTeams,
   type LeaderboardEntry, type BalanceResponse, type PlayerIdentifier
 } from '../api'
 import { QuakeName } from '../components/QuakeName'
 
 export function Balancing() {
   const [selectedPlayers, setSelectedPlayers] = useState<
-    { id: string; name: string; sr: number; isManual: boolean; team?: string; role?: string }[]
+    { id: string; name: string; sr: number; isManual: boolean; team?: string; role?: string; slot?: number }[]
   >([])
   const [ignoreSpecs, setIgnoreSpecs] = useState(true)
   const [manualInput, setManualInput] = useState('')
@@ -17,6 +17,9 @@ export function Balancing() {
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<LeaderboardEntry[]>([])
+  const [lastBalance, setLastBalance] = useState<BalanceResponse | null>(null)
+  const [moving, setMoving] = useState(false)
+  const [moveStatus, setMoveStatus] = useState<{ success: boolean; message: string } | null>(null)
 
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -61,7 +64,7 @@ export function Balancing() {
         : selectedPlayers
         
     const allPlayers: PlayerIdentifier[] = [
-        ...activeSelected.map(p => ({ guid: p.id, name: p.name })),
+        ...activeSelected.map(p => ({ guid: p.id, name: p.name, slot: p.slot })),
         ...manualLines.map(line => ({ guid: line, name: line }))
     ]
     
@@ -75,6 +78,8 @@ export function Balancing() {
     try {
       const res = await balanceTeams(allPlayers)
       setResult(res)
+      setLastBalance(res)
+      setMoveStatus(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to balance teams')
     } finally {
@@ -98,7 +103,8 @@ export function Balancing() {
         sr: p.rating,
         team: p.team,
         role: p.main_role,
-        isManual: false
+        isManual: false,
+        slot: p.slot
       }))
       
       setSelectedPlayers(mapped)
@@ -120,6 +126,36 @@ export function Balancing() {
 
   const removePlayer = (id: string) => {
     setSelectedPlayers(selectedPlayers.filter(p => p.id !== id))
+  }
+
+  const handleMoveInGame = async () => {
+    if (!lastBalance) return
+    
+    setMoving(true)
+    setMoveStatus(null)
+    
+    try {
+      const moves: { slot: number, team: string }[] = []
+      
+      lastBalance.alpha.forEach(p => {
+        if (p.slot !== undefined) moves.push({ slot: p.slot, team: 'Axis' })
+      })
+      lastBalance.beta.forEach(p => {
+        if (p.slot !== undefined) moves.push({ slot: p.slot, team: 'Allies' })
+      })
+      
+      if (moves.length === 0) {
+        setMoveStatus({ success: false, message: 'No players with Client IDs to move.' })
+        return
+      }
+      
+      const res = await movePlayersToTeams(moves)
+      setMoveStatus({ success: true, message: res.details })
+    } catch (e) {
+      setMoveStatus({ success: false, message: e instanceof Error ? e.message : 'Movement failed' })
+    } finally {
+      setMoving(false)
+    }
   }
 
   const totalCount = selectedPlayers.length + manualInput.split('\n').map(s => s.trim()).filter(Boolean).length
@@ -252,9 +288,20 @@ export function Balancing() {
                             <tr key={p.id} className={`transition group ${p.team === 'Spectator' && ignoreSpecs ? 'opacity-30 grayscale' : 'hover:bg-zinc-800/20'}`}>
                                 <td className="px-4 py-2">
                                     <div className="flex flex-col">
-                                        <span className="text-sm font-semibold text-zinc-200 truncate max-w-[180px]"><QuakeName name={p.name} /></span>
-                                        <span className="text-[9px] text-zinc-700 font-mono tracking-widest">[{p.id.slice(0, 12).toUpperCase()}]</span>
-                                    </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-bold group-hover:text-indigo-400 transition-colors">
+                            <QuakeName name={p.name} />
+                          </span>
+                          {p.slot !== undefined && (
+                            <span className="text-[10px] font-mono bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded border border-zinc-700/50">
+                              ID: {p.slot}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-medium tracking-tight mt-0.5 opacity-60">
+                          {p.id.substring(0, 12)}...
+                        </span>
+                      </div>
                                 </td>
                                 <td className="px-4 py-2 text-center">
                                     {p.role && p.role !== 'Unknown' && (
@@ -367,8 +414,13 @@ export function Balancing() {
                                 return (
                                   <tr key={p.guid} className="group hover:bg-rose-500/5 transition-colors">
                                     <td className="px-2 py-3">
-                                      <div className="text-sm font-semibold text-zinc-100 truncate max-w-[120px] xl:max-w-[180px]">
-                                        <QuakeName name={p.name} />
+                                      <div className="flex flex-col">
+                                        <div className="text-sm font-semibold text-zinc-100 truncate max-w-[120px] xl:max-w-[180px]">
+                                          <QuakeName name={p.name} />
+                                        </div>
+                                        {p.slot !== undefined && (
+                                          <span className="text-[9px] text-zinc-500 font-mono">ID: {p.slot}</span>
+                                        )}
                                       </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
@@ -421,8 +473,13 @@ export function Balancing() {
                                 return (
                                   <tr key={p.guid} className="group hover:bg-sky-500/5 transition-colors">
                                     <td className="px-2 py-3">
-                                      <div className="text-sm font-semibold text-zinc-100 truncate max-w-[120px] xl:max-w-[180px]">
-                                        <QuakeName name={p.name} />
+                                      <div className="flex flex-col">
+                                        <div className="text-sm font-semibold text-zinc-100 truncate max-w-[120px] xl:max-w-[180px]">
+                                          <QuakeName name={p.name} />
+                                        </div>
+                                        {p.slot !== undefined && (
+                                          <span className="text-[9px] text-zinc-500 font-mono">ID: {p.slot}</span>
+                                        )}
                                       </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
@@ -512,15 +569,45 @@ export function Balancing() {
                </div>
 
                <button 
-                 disabled
-                 className="bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 px-10 py-4 rounded-2xl text-[12px] font-black uppercase tracking-[0.3em] hover:bg-indigo-500/20 transition-all cursor-not-allowed flex items-center gap-4 shadow-[0_0_30px_rgba(99,102,241,0.05)] active:scale-95 group relative overflow-hidden"
-               >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-indigo-400/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                  <svg className="w-5 h-5 text-indigo-400 opacity-70 group-hover:scale-110 transition-transform" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                  </svg>
-                  Assign Teams in Game
-               </button>
+                  onClick={handleMoveInGame}
+                  disabled={moving}
+                  className={`px-10 py-4 rounded-2xl text-[12px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-4 shadow-[0_0_30px_rgba(99,102,241,0.05)] active:scale-95 group relative overflow-hidden ${
+                    moving 
+                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700' 
+                      : 'bg-indigo-600 text-white border border-indigo-500/50 hover:bg-indigo-500 hover:shadow-indigo-500/20'
+                  }`}
+                >
+                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                   {moving ? (
+                     <div className="w-5 h-5 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+                   ) : (
+                     <svg className="w-5 h-5 opacity-70 group-hover:scale-110 transition-transform" fill="currentColor" viewBox="0 0 20 20">
+                       <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                     </svg>
+                   )}
+                   {moving ? 'Moving...' : 'Assign Teams in Game'}
+                </button>
+
+                {moveStatus && (
+                  <div className={`mt-4 px-6 py-3 rounded-xl border text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-300 ${
+                    moveStatus.success 
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      {moveStatus.success ? (
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                      {moveStatus.message}
+                    </div>
+                  </div>
+                )}
             </div>
           </div>
         </div>
