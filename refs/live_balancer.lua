@@ -1,4 +1,4 @@
--- live_balancer.lua (v3.1 - 10-Chunk Compact Method)
+-- live_balancer.lua (v3.2 - 10-Chunk Compact Method)
 et.RegisterModname("Live Balancer API")
 
 function sanitize_name(text)
@@ -72,11 +72,11 @@ function et_ConsoleCommand()
             end
         end
         
-        print("\nAPI_PLAYERS_SYNC_COMPLETE - v3.1 (10 Chunks)\n")
+        print("\nAPI_PLAYERS_SYNC_COMPLETE - v3.2 (10 Chunks)\n")
         return 1
     end
     return 0
 end
 
-print("[Live API] LOADED - version 3.1")
-et.trap_SendConsoleCommand(et.EXEC_APPEND, "say Live Balancer API v3.1\n")
+print("[Live API] LOADED - version 3.2")
+et.trap_SendConsoleCommand(et.EXEC_APPEND, "say Live Balancer API v3.2\n")
