@@ -27,7 +27,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="ET:Legacy Stats Server", 
-    version="2026.4.6.2", 
+    version="2026.4.6.3", 
     lifespan=lifespan,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json"

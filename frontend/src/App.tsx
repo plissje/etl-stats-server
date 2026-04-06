@@ -32,11 +32,13 @@ function Layout({ children }: { children: ReactNode }) {
       <nav className="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur sticky top-0 z-10 w-full">
         <div className="mx-auto flex flex-col md:flex-row max-w-7xl items-center justify-between px-4 pt-3 md:pb-0 gap-4">
           <div className="flex items-center gap-8">
-            <Link to="/" className="flex items-center gap-2 group">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-black text-white group-hover:bg-indigo-500 transition-colors shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+            <Link to="/" className="flex items-center gap-3 group">
+              <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center font-black text-white group-hover:bg-indigo-500 transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.4)] group-hover:scale-105 active:scale-95">
                 ETL
-                <span className="text-sm font-black tracking-tighter text-white">STATS</span>
-                <span className="text-[10px] font-bold text-indigo-400/80 -mt-1 tracking-widest">v2026.4.6.2</span>
+              </div>
+              <div className="flex flex-col -gap-1">
+                <span className="text-lg font-black tracking-tighter text-white group-hover:text-indigo-400 transition-colors">STATS</span>
+                <span className="text-[10px] font-bold text-indigo-400/80 tracking-[0.2em] -mt-1 opacity-80">v2026.4.6.3</span>
               </div>
             </Link>
           </div>

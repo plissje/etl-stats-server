@@ -265,38 +265,40 @@ export function Balancing() {
             </div>
 
             {/* Search Section - Fixed Relative Container */}
-            <div className="relative z-50">
-              <input
-                type="text"
-                placeholder="Search player name..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-500/50 transition"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-              {searchResults.length > 0 && (
-                <div className="absolute top-full left-0 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden max-h-60 overflow-y-auto ring-1 ring-zinc-800">
-                  {searchResults.map(p => (
-                    <button
-                      key={p.guid}
-                      className="w-full text-left px-4 py-3 hover:bg-violet-600/20 transition text-sm flex justify-between items-center group/item border-b border-zinc-800/50 last:border-0"
-                      onClick={() => {
-                        addPlayer(p);
-                        setSearchQuery('');
-                        setSearchResults([]);
-                      }}
-                    >
-                      <div className="flex flex-col">
-                        <QuakeName name={p.display_name} />
-                        <span className="text-[10px] text-zinc-500 font-mono opacity-50">{p.guid.substring(0, 12)}</span>
-                      </div>
-                      <span className="text-[10px] text-zinc-400 font-black bg-zinc-800 px-2 py-1 rounded group-hover/item:text-white group-hover/item:bg-violet-600 transition-colors">
-                        {Math.round(p.val)} SR
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            {isAuthenticated && (
+              <div className="relative z-50">
+                <input
+                  type="text"
+                  placeholder="Search player name..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-500/50 transition"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchResults.length > 0 && (
+                  <div className="absolute top-full left-0 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden max-h-60 overflow-y-auto ring-1 ring-zinc-800">
+                    {searchResults.map(p => (
+                      <button
+                        key={p.guid}
+                        className="w-full text-left px-4 py-3 hover:bg-violet-600/20 transition text-sm flex justify-between items-center group/item border-b border-zinc-800/50 last:border-0"
+                        onClick={() => {
+                          addPlayer(p);
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        }}
+                      >
+                        <div className="flex flex-col">
+                          <QuakeName name={p.display_name} />
+                          <span className="text-[10px] text-zinc-500 font-mono opacity-50">{p.guid.substring(0, 12)}</span>
+                        </div>
+                        <span className="text-[10px] text-zinc-400 font-black bg-zinc-800 px-2 py-1 rounded group-hover/item:text-white group-hover/item:bg-violet-600 transition-colors">
+                          {Math.round(p.val)} SR
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="space-y-3">
                <label className="text-[10px] text-zinc-500 uppercase font-black tracking-widest px-1">Selected List</label>
