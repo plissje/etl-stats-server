@@ -412,6 +412,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # Map to accumulate totals across ALL rounds (existing in DB + new in payloads)
     total_stats_by_guid: dict[str, TotalStat] = {}
     player_db_by_guid: dict[str, Player] = {}
+    first_team_by_guid: dict[str, int] = {}
     # Map to track cumulative session state *immediately before* the current round
     prev_unpacked_by_guid: dict[str, UnpackedWeaponStats] = {}
 
