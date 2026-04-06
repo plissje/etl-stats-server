@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
-from app.models import Match, Player, PlayerAlias, PlayerMatchStats, PlayerGatherRating, PlayerGatherRatingHistory
+from app.models import Match, Player, PlayerAlias, PlayerMatchStats, PlayerGatherRating, PlayerGatherRatingHistory, MatchPayload
 from app.services.ingest import ingest_match_payloads, recalculate_all_ratings, load_aliases
 from app.utils import SLOW_QUERIES, record_slow_query
 
@@ -57,15 +57,26 @@ def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depen
                 break
             
         if not files:
-            if m.raw_payload:
+            # --- NEW RELATIONAL SOURCE CHECK ---
+            # Prioritize the immutable match_payloads table for reconstruction
+            payload_rows = db.query(MatchPayload).filter(MatchPayload.match_id == m.id).order_by(MatchPayload.round_number).all()
+            if payload_rows:
+                try:
+                    payloads = [json.loads(row.payload) for row in payload_rows]
+                except Exception as e:
+                    print(f"Error parsing MatchPayload for {m.match_id}: {e}")
+            
+            # Fallback to legacy raw_payload column only if the table is empty
+            if not payloads and m.raw_payload:
                 try:
                     payloads = json.loads(m.raw_payload)
                     if not isinstance(payloads, list):
                         payloads = [payloads]
                 except Exception as e:
                     print(f"Error parsing raw_payload for {m.match_id}: {e}")
-            else:
-                # No source data to re-ingest, but we can still recalculate unified_eff
+            
+            if not payloads:
+                # No source data to re-ingest...
                 # directly from the columns already stored in player_match_stats.
                 print(f"Info: No source for match {m.match_id} (DB ID: {m.id}) — recalculating UE from existing columns.")
                 rows = db.query(PlayerMatchStats).filter(PlayerMatchStats.match_id == m.id).all()
@@ -193,6 +204,95 @@ def run_db_migrations(db: Session = Depends(get_db)):
         return {"status": "error", "message": f"Migration failed: {str(e)}"}
 
 
+@router.post("/migrate-payloads")
+def migrate_payloads_to_table(db: Session = Depends(get_db)):
+    """
+    1. Sanitize Data: Fixes 'negative minuses' by setting negative values to 0.
+    2. Schema Update: Ensures 'match_payloads' table exists.
+    3. Migration: Transitions JSON history from 'matches.raw_payload' to 'match_payloads' rows.
+    """
+    from app.database import init_db, engine
+    
+    # 1. DATA SANITIZATION (The 'Negative Minuses' Fix)
+    try:
+        # Use raw SQL to efficiently update all rows across the DB
+        sanity_query = text("""
+            UPDATE player_match_stats 
+            SET revives = MAX(0, revives), 
+                self_kills = MAX(0, self_kills), 
+                team_kills = MAX(0, team_kills), 
+                gibs = MAX(0, gibs),
+                team_gibs = MAX(0, team_gibs),
+                damage_given = MAX(0, damage_given),
+                damage_received = MAX(0, damage_received),
+                time_played_pct = MAX(0, time_played_pct)
+            WHERE revives < 0 OR self_kills < 0 OR team_kills < 0 
+               OR gibs < 0 OR team_gibs < 0 OR damage_given < 0                OR damage_received < 0 OR time_played_pct < 0
+        """)
+        db.execute(sanity_query)
+        
+        # 1b. RECALCULATE DERIVED COLUMNS (KDR/EFF) after fix
+        recalc_query = text("""
+            UPDATE player_match_stats 
+            SET kdr = CASE WHEN deaths > 0 THEN ROUND(CAST(kills AS FLOAT) / deaths, 2) ELSE kills END,
+                eff = CASE WHEN (kills + deaths + self_kills) > 0 
+                           THEN ROUND(100.0 * kills / (kills + deaths + self_kills), 1) 
+                           ELSE 0.0 END
+            WHERE kdr < 0 OR eff < 0
+        """)
+        db.execute(recalc_query)
+        db.commit()
+    except Exception as e:
+        print(f"Sanitization Warning: {e}")
+
+    # 2. SCHEMA UPDATE
+    init_db()
+
+    # 3. MIGRATION
+    matches = db.query(Match).filter(Match.raw_payload.isnot(None)).all()
+    created_rows = 0
+    skipped_matches = 0
+
+    for m in matches:
+        # Check if already migrated to avoid double-entry
+        existing_count = db.query(MatchPayload).filter(MatchPayload.match_id == m.id).count()
+        if existing_count > 0:
+            skipped_matches += 1
+            continue
+
+        try:
+            payloads_list = json.loads(m.raw_payload)
+            if not isinstance(payloads_list, list):
+                payloads_list = [payloads_list]
+            
+            for i, p in enumerate(payloads_list):
+                # Guess round number from internal payload 'round' or use index+1
+                round_num = p.get("round", i + 1)
+                new_p = MatchPayload(
+                    match_id=m.id,
+                    round_number=round_num,
+                    payload=json.dumps(p)
+                )
+                db.add(new_p)
+                created_rows += 1
+        except Exception as e:
+            print(f"Error migrating payloads for match {m.id}: {e}")
+
+    db.commit()
+    
+    # 4. RECALCULATE GLOBAL RATINGS (SR)
+    # Since we've healed negative values, we want to ensure SR reflects the clean data.
+    from app.services.ingest import recalculate_all_ratings
+    recalculate_all_ratings(db)
+    
+    return {
+        "status": "ok",
+        "sanitized": "ok",
+        "migrated_rounds": created_rows,
+        "already_migrated_matches": skipped_matches
+    }
+
+
 @router.post("/db-maintenance")
 def db_maintenance(db: Session = Depends(get_db)):
     """
@@ -217,6 +317,7 @@ def db_stats(db: Session = Depends(get_db)):
             "player_match_stats": db.query(PlayerMatchStats).count(),
             "players": db.query(Player).count(),
             "player_aliases": db.query(PlayerAlias).count(),
+            "match_payloads": db.query(MatchPayload).count(),
         }
         
         # Get index list
@@ -236,104 +337,148 @@ def db_stats(db: Session = Depends(get_db)):
 
 @router.get("/slow-queries")
 def get_slow_queries():
-    """
-    Returns the last 50 recorded slow queries.
-    """
+    """Returns the last 50 recorded slow queries."""
     return {"slow_queries": SLOW_QUERIES}
+
+
+def run_consolidation(db: Session) -> dict:
+    """
+    Core logic: merges all alias player records into their master identity.
+    Called at startup and via the /consolidate endpoint.
+    """
+    alias_map = load_aliases()
+    if not alias_map:
+        return {"status": "ok", "message": "No aliases to consolidate", "consolidated_aliases": 0}
+
+    consolidated_count = 0
+    skipped_count = 0
+
+    try:
+        for alias_guid, master_guid in alias_map.items():
+            if alias_guid == master_guid:
+                skipped_count += 1
+                continue
+
+            master_player = db.query(Player).filter(Player.guid == master_guid).first()
+            alias_player = db.query(Player).filter(Player.guid == alias_guid).first()
+
+            if not alias_player:
+                skipped_count += 1
+                continue
+            if not master_player:
+                # Alias exists but master doesn't yet — re-label it
+                alias_player.guid = master_guid
+                db.flush()
+                skipped_count += 1
+                continue
+            if master_player.id == alias_player.id:
+                skipped_count += 1
+                continue
+
+            print(f"[Consolidate] {alias_player.display_name} ({alias_guid}) → {master_player.display_name} ({master_guid})")
+
+            # 1. Re-attribute Match MVP references
+            db.query(Match).filter(Match.mvp_player_id == alias_player.id).update(
+                {"mvp_player_id": master_player.id}, synchronize_session=False
+            )
+
+            # 2. Migrate PlayerAlias name records
+            db.query(PlayerAlias).filter(PlayerAlias.player_id == alias_player.id).update(
+                {"player_id": master_player.id}, synchronize_session=False
+            )
+
+            # 3. Migrate all PlayerMatchStats — full column set
+            alias_stats = db.query(PlayerMatchStats).filter(
+                PlayerMatchStats.player_id == alias_player.id
+            ).all()
+
+            for a_stat in alias_stats:
+                m_stat = db.query(PlayerMatchStats).filter(
+                    PlayerMatchStats.player_id == master_player.id,
+                    PlayerMatchStats.match_id == a_stat.match_id,
+                    PlayerMatchStats.round_index == a_stat.round_index,
+                ).first()
+
+                if m_stat:
+                    # Conflict: sum all additive counters into the master row
+                    m_stat.kills                     += a_stat.kills or 0
+                    m_stat.deaths                    += a_stat.deaths or 0
+                    m_stat.self_kills                += a_stat.self_kills or 0
+                    m_stat.team_kills                += a_stat.team_kills or 0
+                    m_stat.gibs                      += a_stat.gibs or 0
+                    m_stat.team_gibs                 += a_stat.team_gibs or 0
+                    m_stat.headshots                 += a_stat.headshots or 0
+                    m_stat.xp                        += a_stat.xp or 0
+                    m_stat.damage_given              += a_stat.damage_given or 0
+                    m_stat.damage_received           += a_stat.damage_received or 0
+                    m_stat.team_damage_given         += a_stat.team_damage_given or 0
+                    m_stat.team_damage_received      += a_stat.team_damage_received or 0
+                    m_stat.revives                   += a_stat.revives or 0
+                    m_stat.medkits                   += a_stat.medkits or 0
+                    m_stat.team_medpacks             += a_stat.team_medpacks or 0
+                    m_stat.spam_kills                += a_stat.spam_kills or 0
+                    m_stat.spawn_count               += a_stat.spawn_count or 0
+                    m_stat.crouched_seconds          += a_stat.crouched_seconds or 0
+                    m_stat.proned_seconds            += a_stat.proned_seconds or 0
+                    m_stat.leaned_seconds            += a_stat.leaned_seconds or 0
+                    m_stat.distance_travelled_meters += a_stat.distance_travelled_meters or 0.0
+                    # Recalculate derived floats
+                    m_stat.kdr = round(m_stat.kills / max(1, m_stat.deaths), 2)
+                    m_stat.eff = round(100.0 * m_stat.kills / max(1, m_stat.kills + m_stat.deaths + m_stat.self_kills), 1)
+                    kills = m_stat.kills; revives = m_stat.revives; xp = m_stat.xp
+                    damage = m_stat.damage_given; deaths = m_stat.deaths; sk = m_stat.self_kills
+                    points = kills + (revives * 0.33) + (damage / 100.0) + (xp * 0.1)
+                    total_ue = points + deaths + sk
+                    m_stat.unified_eff = round((points / total_ue) * 100.0, 1) if total_ue > 0 else 0.0
+                    db.delete(a_stat)
+                else:
+                    # No conflict — simply re-attribute the row to the master
+                    a_stat.player_id = master_player.id
+
+            db.flush()
+
+            # 4. Purge alias rating rows (will be recalculated from scratch for master)
+            db.query(PlayerGatherRating).filter(
+                PlayerGatherRating.player_id == alias_player.id
+            ).delete(synchronize_session=False)
+            db.query(PlayerGatherRatingHistory).filter(
+                PlayerGatherRatingHistory.player_id == alias_player.id
+            ).delete(synchronize_session=False)
+            db.flush()
+
+            # 5. Delete the now-empty alias player record
+            db.delete(alias_player)
+            db.flush()
+
+            consolidated_count += 1
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        import traceback
+        print(f"[Consolidate] CRITICAL ERROR: {e}\n{traceback.format_exc()}")
+        return {"status": "error", "message": f"Consolidation failed: {str(e)}"}
+
+    if consolidated_count > 0:
+        print(f"[Consolidate] Merged {consolidated_count} alias(es). Triggering full SR recalculation...")
+        recalculate_all_ratings(db)
+
+    return {
+        "status": "ok",
+        "consolidated_aliases": consolidated_count,
+        "skipped": skipped_count,
+        "message": f"Consolidated {consolidated_count} alias(es). Ratings recalculated." if consolidated_count > 0 else "Database already clean — no orphans found.",
+    }
 
 
 @router.post("/consolidate")
 def consolidate_aliases(db: Session = Depends(get_db)):
     """
     Globally consolidates the database by merging statistics from alias GUIDs
-    into their master identity and purging redundant player records.
+    into their master identity. Also runs automatically on server startup.
     """
-    alias_map = load_aliases()
-    if not alias_map:
-        return {"status": "ok", "message": "No aliases to consolidate"}
-
-    try:
-        consolidated_count = 0
-        # alias_map is {alias_guid: master_guid}
-        
-        # Track which masters we've seen to update their ratings at the end
-        affected_masters = set()
-
-        for alias_guid, master_guid in alias_map.items():
-            master_player = db.query(Player).filter(Player.guid == master_guid).first()
-            alias_player = db.query(Player).filter(Player.guid == alias_guid).first()
-
-            if not master_player or not alias_player:
-                continue
-            
-            if master_player.id == alias_player.id:
-                continue
-
-            print(f"DEBUG: Consolidating {alias_player.display_name} ({alias_guid}) -> {master_player.display_name} ({master_guid})")
-            
-            # 1. Update Match MVPs
-            db.query(Match).filter(Match.mvp_player_id == alias_player.id).update(
-                {"mvp_player_id": master_player.id}, synchronize_session=False
-            )
-            db.flush()
-
-            # 2. Migrate PlayerAlias records
-            db.query(PlayerAlias).filter(PlayerAlias.player_id == alias_player.id).update(
-                {"player_id": master_player.id}, synchronize_session=False
-            )
-            db.flush()
-
-            # 3. Migrate all PlayerMatchStats row-by-row
-            alias_stats = db.query(PlayerMatchStats).filter(PlayerMatchStats.player_id == alias_player.id).all()
-            for a_stat in alias_stats:
-                m_stat = db.query(PlayerMatchStats).filter(
-                    PlayerMatchStats.player_id == master_player.id,
-                    PlayerMatchStats.match_id == a_stat.match_id,
-                    PlayerMatchStats.round_index == a_stat.round_index
-                ).first()
-
-                if m_stat:
-                    m_stat.kills += a_stat.kills
-                    m_stat.deaths += a_stat.deaths
-                    m_stat.xp += a_stat.xp
-                    m_stat.damage_given += a_stat.damage_given
-                    m_stat.damage_received += a_stat.damage_received
-                    m_stat.headshots += a_stat.headshots
-                    m_stat.revives += a_stat.revives
-                    db.delete(a_stat)
-                else:
-                    a_stat.player_id = master_player.id
-            db.flush()
-
-            # 4. Purge alias ratings and history
-            db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == alias_player.id).delete()
-            db.query(PlayerGatherRatingHistory).filter(PlayerGatherRatingHistory.player_id == alias_player.id).delete()
-            db.flush()
-            
-            # 5. Finally, delete the alias player record
-            # Use direct delete on the object to ensure cascades/safeties
-            db.delete(alias_player)
-            db.flush()
-            
-            affected_masters.add(master_player.id)
-            consolidated_count += 1
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        import traceback
-        print(f"CRITICAL CONSOLIDATION ERROR: {e}")
-        print(traceback.format_exc())
-        return {"status": "error", "message": f"Consolidation failed: {str(e)}"}
-
-    # 4. Trigger full SR recalculation to ensure consistency
-    recalculate_all_ratings(db)
-
-    return {
-        "status": "ok", 
-        "consolidated_aliases": consolidated_count,
-        "message": "Global consolidation and rating recalculation complete."
-    }
+    return run_consolidation(db)
 
 
 @router.get("/aliases")

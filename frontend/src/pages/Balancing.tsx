@@ -116,12 +116,28 @@ export function Balancing() {
     }
   }
 
-  const addPlayer = (p: LeaderboardEntry) => {
-    if (!selectedPlayers.find(sp => sp.id === p.guid)) {
-      setSelectedPlayers([...selectedPlayers, { id: p.guid, name: p.display_name, sr: p.val, isManual: false, role: 'Unknown' }])
+  const addPlayer = async (p: LeaderboardEntry) => {
+    if (selectedPlayers.find(sp => sp.id === p.guid)) {
+      setSearchQuery('')
+      setSearchResults([])
+      return
     }
+    // Add immediately with placeholder role so the UI responds instantly
+    const newEntry = { id: p.guid, name: p.display_name, sr: p.val, isManual: false, role: 'Unknown' }
+    setSelectedPlayers(prev => [...prev, newEntry])
     setSearchQuery('')
     setSearchResults([])
+
+    // Resolve role from backend in the background
+    try {
+      const res = await balanceTeams([{ guid: p.guid, name: p.display_name }])
+      const resolved = [...(res.alpha ?? []), ...(res.beta ?? [])].find(r => r.guid.toUpperCase() === p.guid.toUpperCase())
+      if (resolved?.role && resolved.role !== 'Unknown') {
+        setSelectedPlayers(prev => prev.map(sp =>
+          sp.id === p.guid ? { ...sp, role: resolved.role } : sp
+        ))
+      }
+    } catch { /* role stays as Unknown if lookup fails */ }
   }
 
   const removePlayer = (id: string) => {
@@ -247,8 +263,9 @@ export function Balancing() {
                     </span>
                 </div>
             </div>
-            
-            <div className="relative">
+
+            {/* Search Section - Fixed Relative Container */}
+            <div className="relative z-50">
               <input
                 type="text"
                 placeholder="Search player name..."
@@ -257,20 +274,31 @@ export function Balancing() {
                 onChange={e => setSearchQuery(e.target.value)}
               />
               {searchResults.length > 0 && (
-                <div className="absolute top-full left-0 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-20 overflow-hidden max-h-60 overflow-y-auto">
+                <div className="absolute top-full left-0 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden max-h-60 overflow-y-auto ring-1 ring-zinc-800">
                   {searchResults.map(p => (
                     <button
                       key={p.guid}
-                      className="w-full text-left px-4 py-2 hover:bg-zinc-800 transition text-sm flex justify-between items-center"
-                      onClick={() => addPlayer(p)}
+                      className="w-full text-left px-4 py-3 hover:bg-violet-600/20 transition text-sm flex justify-between items-center group/item border-b border-zinc-800/50 last:border-0"
+                      onClick={() => {
+                        addPlayer(p);
+                        setSearchQuery('');
+                        setSearchResults([]);
+                      }}
                     >
-                      <QuakeName name={p.display_name} />
-                      <span className="text-[10px] text-zinc-500">{p.val} SR</span>
+                      <div className="flex flex-col">
+                        <QuakeName name={p.display_name} />
+                        <span className="text-[10px] text-zinc-500 font-mono opacity-50">{p.guid.substring(0, 12)}</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 font-black bg-zinc-800 px-2 py-1 rounded group-hover/item:text-white group-hover/item:bg-violet-600 transition-colors">
+                        {Math.round(p.val)} SR
+                      </span>
                     </button>
                   ))}
                 </div>
               )}
-                    <div className="space-y-3">
+            </div>
+            
+            <div className="space-y-3">
                <label className="text-[10px] text-zinc-500 uppercase font-black tracking-widest px-1">Selected List</label>
                <div className="min-h-[120px] max-h-[300px] overflow-y-auto custom-scrollbar bg-zinc-950/30 rounded-xl border border-zinc-800/40 relative">
                   <table className="w-full border-collapse">
@@ -292,14 +320,18 @@ export function Balancing() {
                           <span className="text-white font-bold group-hover:text-indigo-400 transition-colors">
                             <QuakeName name={p.name} />
                           </span>
-                          {p.slot !== undefined && (
-                            <span className="text-[10px] font-mono bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded border border-zinc-700/50">
+                          {p.slot !== undefined ? (
+                            <span className="text-[10px] font-black bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/30 shadow-sm">
                               ID: {p.slot}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-black bg-zinc-800/50 text-zinc-600 px-2 py-0.5 rounded border border-zinc-700/30 italic">
+                              Manual
                             </span>
                           )}
                         </div>
-                        <span className="text-[10px] text-zinc-500 font-medium tracking-tight mt-0.5 opacity-60">
-                          {p.id.substring(0, 12)}...
+                        <span className="text-[10px] text-zinc-600 font-bold tracking-tighter mt-0.5 opacity-60">
+                          {p.id.substring(0, 12)}
                         </span>
                       </div>
                                 </td>
@@ -357,7 +389,6 @@ export function Balancing() {
                   )}
                </div>
             </div>
-      </div>
 
             <div className="space-y-2 pt-2">
               <label className="text-[10px] text-zinc-500 uppercase font-black tracking-widest px-1">Quick-Paste Field (Names or GUIDs)</label>
@@ -409,8 +440,6 @@ export function Balancing() {
                            </thead>
                            <tbody className="divide-y divide-zinc-900/50">
                               {result.alpha.map(p => {
-                                const sp = selectedPlayers.find(s => s.id === p.guid);
-                                const role = sp?.role;
                                 return (
                                   <tr key={p.guid} className="group hover:bg-rose-500/5 transition-colors">
                                     <td className="px-2 py-3">
@@ -424,18 +453,18 @@ export function Balancing() {
                                       </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
-                                      {role && role !== 'Unknown' && (
+                                      {p.role && (
                                         <span className={`text-[8px] font-black px-1 rounded uppercase tracking-tighter border ${
-                                            role === 'Medic' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                            role === 'Rifle/Eng' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                                            role === 'Field Ops' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' :
-                                            role === 'Engineer' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                                            p.role === 'Medic' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                            p.role === 'Rifle/Eng' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                            p.role === 'Field Ops' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' :
+                                            p.role === 'Engineer' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
                                             'bg-zinc-800 text-zinc-400'
                                         }`}>
-                                            {role === 'Rifle/Eng' ? 'R/E' : 
-                                             role === 'Field Ops' ? 'FOP' : 
-                                             role === 'Engineer' ? 'ENG' :
-                                             role.charAt(0)}
+                                            {p.role === 'Rifle/Eng' ? 'R/E' : 
+                                             p.role === 'Field Ops' ? 'FOP' : 
+                                             p.role === 'Engineer' ? 'ENG' :
+                                             p.role.charAt(0)}
                                         </span>
                                       )}
                                     </td>
@@ -468,8 +497,6 @@ export function Balancing() {
                            </thead>
                            <tbody className="divide-y divide-zinc-900/50">
                               {result.beta.map(p => {
-                                const sp = selectedPlayers.find(s => s.id === p.guid);
-                                const role = sp?.role;
                                 return (
                                   <tr key={p.guid} className="group hover:bg-sky-500/5 transition-colors">
                                     <td className="px-2 py-3">
@@ -483,18 +510,18 @@ export function Balancing() {
                                       </div>
                                     </td>
                                     <td className="px-2 py-3 text-center">
-                                      {role && role !== 'Unknown' && (
+                                      {p.role && (
                                         <span className={`text-[8px] font-black px-1 rounded uppercase tracking-tighter border ${
-                                            role === 'Medic' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                            role === 'Rifle/Eng' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                                            role === 'Field Ops' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' :
-                                            role === 'Engineer' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                                            p.role === 'Medic' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                            p.role === 'Rifle/Eng' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                            p.role === 'Field Ops' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' :
+                                            p.role === 'Engineer' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
                                             'bg-zinc-800 text-zinc-400'
                                         }`}>
-                                            {role === 'Rifle/Eng' ? 'R/E' : 
-                                             role === 'Field Ops' ? 'FOP' : 
-                                             role === 'Engineer' ? 'ENG' :
-                                             role.charAt(0)}
+                                            {p.role === 'Rifle/Eng' ? 'R/E' : 
+                                             p.role === 'Field Ops' ? 'FOP' : 
+                                             p.role === 'Engineer' ? 'ENG' :
+                                             p.role.charAt(0)}
                                         </span>
                                       )}
                                     </td>
@@ -514,12 +541,10 @@ export function Balancing() {
       {result && (
         <div className="animate-in slide-in-from-bottom-4 duration-500 delay-150">
           <div className="bg-zinc-900/40 border border-zinc-800/80 p-6 rounded-[2rem] flex flex-col gap-6 shadow-2xl backdrop-blur-md">
-            
-            {/* Row 1: Informational Data */}
-            <div className="flex items-center justify-between">
-               <div className="flex items-center gap-10">
+             {/* Row 1: Informational Data */}
+            <div className="grid grid-cols-3 gap-8">
                   <div className="flex flex-col">
-                     <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Statistical Variance</span>
+                     <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Balance Quality</span>
                      <div className="flex items-center gap-3">
                         <span className={`text-3xl font-black leading-none ${result.diff < 50 ? 'text-emerald-400' : 'text-amber-400'}`}>
                            {Math.round(result.diff)}
@@ -533,81 +558,86 @@ export function Balancing() {
                      </div>
                   </div>
 
-                  <div className="h-10 w-px bg-zinc-800/50" />
-
-                  <div className="flex flex-col">
-                     <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Tactical Spread</span>
-                     <div className="flex gap-3">
-                        <div className="flex items-center gap-2 bg-zinc-950/40 px-3 py-1.5 rounded-xl border border-zinc-800/50">
+                  <div className="flex flex-col border-x border-zinc-800/50 px-8">
+                     <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Team Representation</span>
+                     <div className="flex gap-4">
+                        <div className="flex items-center gap-2 bg-zinc-950/40 px-3 py-1.5 rounded-xl border border-zinc-800/50 shadow-inner">
                            <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]" />
-                           <span className="text-[11px] text-zinc-400 font-black uppercase tracking-[0.2em] leading-none">Alpha</span>
+                           <span className="text-[11px] text-zinc-400 font-black uppercase tracking-[0.2em] leading-none">Axis</span>
                         </div>
-                        <div className="flex items-center gap-2 bg-zinc-950/40 px-3 py-1.5 rounded-xl border border-zinc-800/50">
+                        <div className="flex items-center gap-2 bg-zinc-950/40 px-3 py-1.5 rounded-xl border border-zinc-800/50 shadow-inner">
                            <div className="w-1.5 h-1.5 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.4)]" />
-                           <span className="text-[11px] text-zinc-400 font-black uppercase tracking-[0.2em] leading-none">Beta</span>
+                           <span className="text-[11px] text-zinc-400 font-black uppercase tracking-[0.2em] leading-none">Allies</span>
                         </div>
                      </div>
                   </div>
-               </div>
 
-               <div className="text-right flex flex-col justify-center">
-                  <span className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">Fleet Status</span>
-                  <span className="text-[9px] text-emerald-500/60 font-bold uppercase tracking-widest animate-pulse">Comms Link Stable</span>
-               </div>
+                <div className="text-right flex flex-col justify-center">
+                   <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">RCON Status</span>
+                   <span className="text-[9px] text-emerald-500/80 font-black uppercase tracking-widest flex items-center justify-end gap-2">
+                       Link Stable
+                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                   </span>
+                </div>
             </div>
 
             <div className="h-px w-full bg-zinc-800/30" />
 
             {/* Row 2: Action Terminal */}
-            <div className="flex items-center justify-between">
-               <div className="flex flex-col">
-                  <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Commander's Terminal</span>
+            <div className="flex flex-col items-center gap-6 py-2">
+               <div className="flex flex-col items-center text-center">
+                  <span className="text-zinc-600 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Team Deployment</span>
                   <div className="flex items-center gap-2">
-                     <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
-                     <span className="text-xs text-zinc-400 font-medium uppercase tracking-widest opacity-80">Ready for team resonance deployment</span>
+                     <span className="text-xs text-zinc-500 font-bold uppercase tracking-widest opacity-80">Ready to sync team assignments with server</span>
                   </div>
                </div>
 
-               <button 
-                  onClick={handleMoveInGame}
-                  disabled={moving}
-                  className={`px-10 py-4 rounded-2xl text-[12px] font-black uppercase tracking-[0.3em] transition-all flex items-center gap-4 shadow-[0_0_30px_rgba(99,102,241,0.05)] active:scale-95 group relative overflow-hidden ${
-                    moving 
-                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700' 
-                      : 'bg-indigo-600 text-white border border-indigo-500/50 hover:bg-indigo-500 hover:shadow-indigo-500/20'
-                  }`}
-                >
-                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                   {moving ? (
-                     <div className="w-5 h-5 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
-                   ) : (
-                     <svg className="w-5 h-5 opacity-70 group-hover:scale-110 transition-transform" fill="currentColor" viewBox="0 0 20 20">
-                       <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                     </svg>
-                   )}
-                   {moving ? 'Moving...' : 'Assign Teams in Game'}
-                </button>
-
-                {moveStatus && (
-                  <div className={`mt-4 px-6 py-3 rounded-xl border text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-300 ${
-                    moveStatus.success 
-                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      {moveStatus.success ? (
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                      {moveStatus.message}
-                    </div>
-                  </div>
-                )}
+               <div className="relative group">
+                    <button 
+                        onClick={handleMoveInGame}
+                        disabled={moving}
+                        className={`px-16 py-5 rounded-2xl text-[13px] font-black uppercase tracking-[0.4em] transition-all flex items-center gap-4 shadow-xl active:scale-95 group relative overflow-hidden ${
+                            moving 
+                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700' 
+                            : 'bg-indigo-600 text-white border border-indigo-500/50 hover:bg-indigo-500 hover:shadow-[0_0_40px_rgba(99,102,241,0.2)]'
+                        }`}
+                        >
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                        {moving ? (
+                            <div className="w-5 h-5 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                            <svg className="w-5 h-5 opacity-80 group-hover:scale-110 transition-transform" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                            </svg>
+                        )}
+                        {moving ? 'Executing...' : 'Deploy Teams'}
+                    </button>
+                    
+                    {moveStatus && (
+                        <div className={`mt-6 px-8 py-4 rounded-xl border text-[11px] font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-4 duration-500 shadow-lg ${
+                            moveStatus.success 
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                            : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                        }`}>
+                            <div className="flex items-center gap-4">
+                            {moveStatus.success ? (
+                                <div className="w-5 h-5 bg-emerald-500/20 rounded-full flex items-center justify-center">
+                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                            ) : (
+                                <div className="w-5 h-5 bg-rose-500/20 rounded-full flex items-center justify-center">
+                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                            )}
+                            {moveStatus.message}
+                             </div>
+                        </div>
+                    )}
+               </div>
             </div>
           </div>
         </div>
@@ -616,7 +646,7 @@ export function Balancing() {
           )}
         </div>
       </div>
-      </div>
     </div>
+  </div>
   )
 }

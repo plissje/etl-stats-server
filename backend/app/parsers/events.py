@@ -23,6 +23,9 @@ def _same_player(a: str, b: str) -> bool:
 class EventMetrics:
     kills: int = 0
     deaths: int = 0
+    self_kills: int = 0  # All self-inflicted deaths: grenade splash, arty, dynamite, MOD_SUICIDE etc.
+    team_kills: int = 0
+    team_gibs: int = 0
     headshot_hits: int = 0
     shots_recorded: int = 0
     team_medpacks: int = 0
@@ -60,13 +63,33 @@ def compute_event_metrics(
             for ob in obituaries:
                 atk = _get_master(str(ob.get("attacker") or ""))
                 tgt = _get_master(str(ob.get("target") or ""))
+                
                 if _same_player(tgt, pg):
                     m.deaths += 1
-                    if atk and not _same_player(atk, tgt):
-                        m.nemesis_deaths[atk] = m.nemesis_deaths.get(atk, 0) + 1
-                if _same_player(atk, pg) and atk and tgt and not _same_player(atk, tgt):
-                    m.kills += 1
-                    m.nemesis_kills[tgt] = m.nemesis_kills.get(tgt, 0) + 1
+                    if _same_player(atk, tgt) or atk == "WORLD":
+                        m.self_kills += 1
+                    elif atk and not _same_player(atk, tgt):
+                        # Potential Team-Kill or Nemesis Death
+                        t_team = team_by_guid.get(tgt, 0)
+                        a_team = team_by_guid.get(atk, 0)
+                        if t_team and a_team and t_team == a_team:
+                            # They were killed by a teammate
+                            pass 
+                        else:
+                            m.nemesis_deaths[atk] = m.nemesis_deaths.get(atk, 0) + 1
+                            
+                if _same_player(atk, pg) and atk and tgt:
+                    if _same_player(atk, tgt):
+                        # Already counted as self_kill in the tgt block above if tgt == pg
+                        pass
+                    else:
+                        t_team = team_by_guid.get(tgt, 0)
+                        a_team = team_by_guid.get(atk, 0)
+                        if t_team and a_team and t_team == a_team:
+                            m.team_kills += 1
+                        else:
+                            m.kills += 1
+                            m.nemesis_kills[tgt] = m.nemesis_kills.get(tgt, 0) + 1
 
         # Process legacy damage_stats (Heads/Shots)
         if damage_stats:
@@ -107,19 +130,27 @@ def compute_event_metrics(
             if label in ("kill", "teamkill"):
                 atk = _get_master(str(ev.get("killer") or ""))
                 tgt = _get_master(str(ev.get("victim") or ""))
+                
                 if _same_player(tgt, pg):
                     m.deaths += 1
-                    if label == "kill" and atk and not _same_player(atk, tgt):
+                    if _same_player(atk, tgt):
+                        # Self-kill: grenade splash, arty, dynamite, falling, etc.
+                        m.self_kills += 1
+                    elif label == "kill" and atk and not _same_player(atk, tgt):
                         m.nemesis_deaths[atk] = m.nemesis_deaths.get(atk, 0) + 1
+                
                 if _same_player(atk, pg) and atk and tgt and not _same_player(atk, tgt):
                     if label == "kill":
                         m.kills += 1
                         m.nemesis_kills[tgt] = m.nemesis_kills.get(tgt, 0) + 1
+                    elif label == "teamkill":
+                        m.team_kills += 1
 
             elif label == "suicide":
                 p = _get_master(str(ev.get("player") or ""))
                 if _same_player(p, pg):
                     m.deaths += 1
+                    m.self_kills += 1  # MOD_SUICIDE (kill key)
 
             elif label == "damage":
                 atk = _get_master(str(ev.get("killer") or ""))
@@ -136,11 +167,8 @@ def compute_event_metrics(
                         m.headshot_hits += 1
                     m.shots_recorded += 1
 
-
-                if _same_player(atk, pg):
                     t_team = team_by_guid.get(tgt, 0)
                     p_team = team_by_guid.get(pg, 0)
-                    # For medkits and ammo, the engine emits damage events where attacker == pg (usually themselves or team members)
                     if t_team and p_team and t_team == p_team:
                         killer_class = ev.get("killer_class", "")
                         support_type = get_support_type_from_mod(mod_i, killer_class)
@@ -150,6 +178,7 @@ def compute_event_metrics(
                             m.team_medpacks += 1
                         elif support_type == "ammo":
                             m.team_ammopacks += 1
+            
             elif label == "revive":
                 p_guid = _get_master(str(ev.get("player") or "")) # Medic
                 if _same_player(p_guid, pg):

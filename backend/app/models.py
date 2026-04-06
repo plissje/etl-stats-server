@@ -23,7 +23,23 @@ class Match(Base):
     player_stats: Mapped[list["PlayerMatchStats"]] = relationship(
         "PlayerMatchStats", back_populates="match", cascade="all, delete-orphan"
     )
+    payloads: Mapped[list["MatchPayload"]] = relationship(
+        "MatchPayload", back_populates="match", cascade="all, delete-orphan"
+    )
     mvp_player: Mapped["Player | None"] = relationship("Player")
+
+
+class MatchPayload(Base):
+    __tablename__ = "match_payloads"
+    __table_args__ = (UniqueConstraint("match_id", "round_number", name="uq_match_round_payload"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    match_id: Mapped[int] = mapped_column(Integer, ForeignKey("matches.id", ondelete="CASCADE"), index=True)
+    round_number: Mapped[int] = mapped_column(Integer, default=1)
+    payload: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    match: Mapped["Match"] = relationship("Match", back_populates="payloads")
 
 
 class Player(Base):

@@ -119,12 +119,12 @@ def _aggregate_weapons(stats_rows: list[PlayerMatchStats]) -> list[dict[str, Any
 @router.get("")
 def search_players(q: str = "", skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
     from sqlalchemy import desc
+    # The DB is kept clean by the startup alias consolidation — simple query is sufficient.
     query = db.query(Player.guid, Player.display_name, Player.raw_name_last, PlayerGatherRating.current_rating) \
               .join(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
     if q:
         query = query.filter(Player.display_name.ilike(f"%{q}%"))
-    query = query.order_by(desc(PlayerGatherRating.current_rating)).offset(skip).limit(limit)
-    rows = query.all()
+    rows = query.order_by(desc(PlayerGatherRating.current_rating)).offset(skip).limit(limit).all()
     return [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.current_rating, 1)} for r in rows]
 
 

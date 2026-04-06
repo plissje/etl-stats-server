@@ -10,6 +10,7 @@ import asyncio
 import json
 from collections import Counter
 from app.services.rcon import send_rcon_command
+from app.services.player_stats import get_player_ratings_and_roles
 
 router = APIRouter(prefix="/api/server", tags=["server"])
 
@@ -75,6 +76,13 @@ async def get_players(db: Session = Depends(get_db)):
     
     # 3. Parse compact format: slot|guid|team|name
     print(f"DEBUG RAW CHunks: {combined_entries}") # Log raw data for verification
+    from app.services.aliases import resolve_guid
+    from app.services.player_stats import get_player_ratings_and_roles
+    
+    player_list = []
+    guids_to_fetch = []
+    
+    # Temporary list to hold parsed data before resolution
     live_players = []
     for entry in combined_entries:
         if "|" not in entry:
@@ -92,6 +100,23 @@ async def get_players(db: Session = Depends(get_db)):
         except:
             continue
 
+    for raw in live_players:
+        p_guid = str(raw.get("guid", "")).strip().upper()
+        if not p_guid or p_guid == "UNKNOWN":
+            continue
+            
+        # Resolve to Master GUID immediately
+        master_guid = resolve_guid(p_guid)
+            
+        p_info = {
+            "slot": int(raw.get("slot", 0)),
+            "name": str(raw.get("name", "Unknown")),
+            "team": int(raw.get("team", 0)),
+            "guid": master_guid # Use Master GUID in the balancer
+        }
+        player_list.append(p_info)
+        guids_to_fetch.append(master_guid)
+
     print(f"DEBUG: Total live players pre-rating: {len(live_players)}")
 
     if not live_players:
@@ -99,113 +124,7 @@ async def get_players(db: Session = Depends(get_db)):
         
     # 4. Join with database ratings and roles precisely using GUID
     found_guids = [p['guid'].upper() for p in live_players]
-    ratings_map = {}
-    roles_map = {}
-    
-    if found_guids:
-        # Fetch ratings
-        db_ratings = (
-            db.query(Player.guid, PlayerGatherRating.current_rating)
-            .join(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
-            .filter(Player.guid.in_(found_guids))
-            .all()
-        )
-        ratings_map = {guid.upper(): rating for guid, rating in db_ratings}
-
-        # role_map = {
-        #     "Medic": "Medic",
-        #     "Engineer": "Rifle/Eng" or "Engineer",
-        #     "Field Ops": "Field Ops",
-        # }
-        
-        # To keep it performant, we'll fetch stats for these players
-        stats_rows = (
-            db.query(Player.guid, PlayerMatchStats.classes_played_json, PlayerMatchStats.weapon_breakdown_json)
-            .join(Player, Player.id == PlayerMatchStats.player_id)
-            .filter(Player.guid.in_(found_guids))
-            .order_by(desc(PlayerMatchStats.id))
-            .limit(1000) # Bulk fetch recent stats
-            .all()
-        )
-
-        # Aggregate roles and weapons in memory
-        player_class_times = {} # guid -> Counter
-        player_weapon_kills = {} # guid -> Counter
-        
-        # Identification sets for Rifles vs SMGs
-        RIFLE_WEAPONS = {"WS_K43", "WS_GARAND", "WS_KAR98", "WS_M1_GARAND", "WS_K43_RIFLE", "WS_SVT40", "WS_GPG40", "WS_M7"}
-        SMG_WEAPONS = {"WS_THOMPSON", "WS_MP40", "WS_STEN"}
-
-        for guid, classes_json, weapons_json in stats_rows:
-            guid = guid.upper()
-            if guid not in player_class_times:
-                player_class_times[guid] = Counter()
-                player_weapon_kills[guid] = Counter()
-
-            # 1. Classes - Calculate duration between timestamps
-            if classes_json:
-                try:
-                    classes = json.loads(classes_json)
-                    # Sort by timestamp to ensure we can calculate differences
-                    classes.sort(key=lambda x: x.get('timestamp', 0))
-                    
-                    for i, c in enumerate(classes):
-                        class_name = c.get('toClass', 'unknown').lower()
-                        start_time = c.get('timestamp', 0)
-                        
-                        # Use the next timestamp to calculate duration, or a default 10min if it's the only/last one
-                        if i + 1 < len(classes):
-                            duration = max(0, classes[i+1].get('timestamp', 0) - start_time)
-                        else:
-                            # For the last class or single-class players, give it a significant base weight (600s)
-                            # so they are correctly identified even with one entry.
-                            duration = 600
-                        
-                        player_class_times[guid][class_name] += duration
-                except: pass
-
-            # 2. Weapons
-            if weapons_json:
-                try:
-                    weapons = json.loads(weapons_json)
-                    for w in weapons:
-                        w_name = w.get('name', '')
-                        kills = w.get('kills', 0)
-                        if w_name in RIFLE_WEAPONS or w_name in SMG_WEAPONS:
-                            player_weapon_kills[guid][w_name] += kills
-                except: pass
-
-        for guid, counts in player_class_times.items():
-            if not counts: continue
-            
-            # Apply Tactical Weighting: Prioritize Engineer and Field Ops over Medic
-            # This ensures that if a player plays both roughly equally, we show the more 
-            # tactically significant role for balancing.
-            weighted_counts = Counter(counts)
-            weighted_counts['engineer'] = int(weighted_counts['engineer'] * 1.5)
-            weighted_counts['fieldop'] = int(weighted_counts['fieldop'] * 1.3)
-            
-            # Find dominant class from weighted counts
-            top_class = weighted_counts.most_common(1)[0][0]
-            
-            # Map ET classes to roles
-            role = "Medic" # Default fallback
-            if top_class == "medic":
-                role = "Medic"
-            elif top_class == "fieldop":
-                role = "Field Ops"
-            elif top_class == "engineer":
-                # Check for Rifle vs SMG preference for Engineers
-                w_kills = player_weapon_kills.get(guid, Counter())
-                rifle_kills = sum(w_kills[w] for w in RIFLE_WEAPONS)
-                smg_kills = sum(w_kills[w] for w in SMG_WEAPONS)
-                
-                if rifle_kills > smg_kills:
-                    role = "Rifle/Eng"
-                else:
-                    role = "Engineer"
-            
-            roles_map[guid] = role
+    ratings_map, roles_map = get_player_ratings_and_roles(db, found_guids)
 
     # 5. Format output
     final_players = []

@@ -38,7 +38,7 @@ function Layout({ children }: { children: ReactNode }) {
               </div>
               <div className="flex flex-col">
                 <span className="text-sm font-black tracking-tighter text-white">STATS</span>
-                <span className="text-[10px] font-bold text-indigo-400/80 -mt-1 tracking-widest">v2026.4.5.1</span>
+                <span className="text-[10px] font-bold text-indigo-400/80 -mt-1 tracking-widest">v2026.4.6.1</span>
               </div>
             </Link>
           </div>

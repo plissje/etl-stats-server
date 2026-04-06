@@ -60,7 +60,9 @@ def calculate_openskill_ratings(
         total_points = p.kills + (p.revives * 0.33) + (p.damage_given / 100.0) + (p.xp * 0.1)
         
         # Unified Efficiency: Points / (Points + Deaths + SelfKills)
-        total_actions = total_points + p.deaths + p.self_kills
+        # Self-kills are weighted at 0.25 — they are largely tactical in ET:Legacy
+        # (grenades, dynamite, arty) and should not penalise equally to an enemy kill.
+        total_actions = total_points + p.deaths + (p.self_kills * 0.25)
         unified_eff = (total_points / max(1, total_actions)) * 100.0
         
         # FINAL SR SCORE: Directly use the Unified Efficiency

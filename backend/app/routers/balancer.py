@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from app.database import get_db
 from app.models import Player, PlayerGatherRating
 from sqlalchemy import or_
+from app.services.player_stats import get_player_ratings_and_roles
 
 router = APIRouter(prefix="/api/balancer", tags=["balancer"])
 
@@ -21,6 +23,7 @@ class TeamPlayer(BaseModel):
     name: str
     rating: float
     slot: Optional[int] = None
+    role: str = "Unknown"
 
 class BalanceResponse(BaseModel):
     alpha: List[TeamPlayer]
@@ -34,37 +37,24 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
     if not req.players:
         raise HTTPException(status_code=400, detail="No players provided")
     
-    # 1. Fetch ratings from DB using the GUIDs
+    # 1. Fetch ratings and roles from DB using the GUIDs
     guids = [p.guid for p in req.players]
-    names = [p.name for p in req.players] # For name-based resolution fallback
-    
-    found_players = (
-        db.query(Player.guid, Player.display_name, PlayerGatherRating.current_rating)
-        .outerjoin(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
-        .filter(or_(
-            Player.guid.in_(guids),
-            Player.display_name.in_(names)
-        ))
-        .all()
-    )
-    
-    # Map found ratings for lookup
-    db_data = {} # guid/name -> rating
-    for guid, display_name, rating in found_players:
-        if guid: db_data[guid] = rating or 1500.0
-        if display_name: db_data[display_name] = rating or 1500.0
+    ratings_map, roles_map = get_player_ratings_and_roles(db, guids)
     
     # Process each player from the request, prioritizing the provided name
     team_players = []
     for p in req.players:
-        # Check rating: Try GUID first, then Name fallback
-        rating = db_data.get(p.guid) or db_data.get(p.name) or 1500.0
+        guid_upper = p.guid.upper()
+        # Check rating: Try GUID first, default 1500.0
+        rating = ratings_map.get(guid_upper, 1500.0)
+        role = roles_map.get(guid_upper, "Unknown")
         
         team_players.append(TeamPlayer(
             guid=p.guid,
             name=p.name, # ALWAYS use the name provided in the request
             rating=rating,
-            slot=p.slot
+            slot=p.slot,
+            role=role
         ))
     
     if not team_players:

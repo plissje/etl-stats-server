@@ -12,6 +12,7 @@ from app.models import (
     PlayerGatherRating,
     PlayerGatherRatingHistory,
     PlayerMatchStats,
+    MatchPayload,
 )
 from app.parsers.events import compute_event_metrics, hs_accuracy, nemesis_to_json
 from app.parsers.names import strip_quake_colors
@@ -72,11 +73,22 @@ def _eff_kdr(kills: int, deaths: int, self_kills: int = 0) -> tuple[float, float
     return eff, kdr
 
 
+def _calc_delta(current: int | float, previous: int | float | None) -> int | float:
+    if previous is None:
+        return current
+    delta = current - (previous or 0)
+    if delta < 0:
+        # Reset detected: previous session state was lost or engine counter rolled over
+        return current
+    return delta
+
+
 def _calculate_unified_eff(kills: int, revives: int, damage_given: int, xp: int, deaths: int, self_kills: int) -> float:
     # Unified Points formula from rating.py
     # 0.33 per Revive (1/3 of a kill), 0.1 per XP
+    # Self-kills weighted at 0.25 — tactical in ET:Legacy, not equivalent to enemy death
     points = kills + (revives * 0.33) + (damage_given / 100.0) + (xp * 0.1)
-    total_actions = points + deaths + self_kills
+    total_actions = points + deaths + (self_kills * 0.25)
     if total_actions <= 0:
         return 0.0
     return round((points / total_actions) * 100.0, 1)
@@ -273,6 +285,39 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
 
     if existing:
         print(f"DEBUG: Found existing match record {match_id} - merging rounds.")
+        
+        # --- NEW RELATIONAL PAYLOAD STORAGE ---
+        # For each incoming payload, we store it as a separate row in MatchPayload.
+        # This prevents accidental truncation of the entire match history.
+        for i, p in enumerate(payloads):
+            ri_p = p.get("round_info") or {}
+            round_num = int(ri_p.get("round_index") or ri_p.get("round") or (i + 1))
+            
+            # Upsert logic for the specific round
+            existing_payload_row = db.query(MatchPayload).filter(
+                MatchPayload.match_id == existing.id,
+                MatchPayload.round_number == round_num
+            ).one_or_none()
+            
+            if existing_payload_row:
+                existing_payload_row.payload = json.dumps(p)
+            else:
+                db.add(MatchPayload(
+                    match_id=existing.id,
+                    round_number=round_num,
+                    payload=json.dumps(p)
+                ))
+        
+        db.flush() # Ensure MatchPayload rows are in the session
+        
+        # --- FULL HISTORY RECONSTRUCTION ---
+        # We always process THE ENTIRE match history from the MatchPayload table.
+        # This guarantees Round 0 (Total Score) is always accurate.
+        all_payload_rows = db.query(MatchPayload).filter(MatchPayload.match_id == existing.id).order_by(MatchPayload.round_number).all()
+        payloads = [json.loads(mp_row.payload) for mp_row in all_payload_rows]
+        
+        # ... logic for ratings reversal remains the same ...
+
         # Revert ratings for existing histories (they will be recalculated)
         hists = (
             db.query(PlayerGatherRatingHistory)
@@ -285,14 +330,20 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 gr.current_rating = max(100.0, gr.current_rating - h.delta)
         db.query(PlayerGatherRatingHistory).filter(PlayerGatherRatingHistory.match_id == existing.id).delete()
         
-        # Delete only the rounds we are overwriting (plus the total row at round_index=0)
+        # We RE-IDENTIFY processing rounds now that we've merged
+        processing_round_indices = []
+        for i, p in enumerate(payloads):
+            r_info = p.get("round_info") or {}
+            ri = int(r_info.get("round_index") or r_info.get("round") or (i + 1))
+            processing_round_indices.append(ri)
+
+        # Delete all round rows we are about to (re)process (plus the total row at round_index=0)
         db.query(PlayerMatchStats).filter(
             PlayerMatchStats.match_id == existing.id,
             PlayerMatchStats.round_index.in_([0] + processing_round_indices)
         ).delete()
         
         existing.mapname = mapname
-        # Note: winner_team will be recalculated later if needed
         existing.round_start_unix = min(existing.round_start_unix, rs)
         existing.round_end_unix = max(existing.round_end_unix, re)
         match_row = existing
@@ -305,9 +356,21 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             winner_team=winner_team,
             round_start_unix=rs,
             round_end_unix=re,
+            # We also save to the legacy raw_payload for backward compatibility/backup for now
             raw_payload=json.dumps(payloads),
         )
         db.add(match_row)
+        db.flush()
+        
+        # Store initial rounds in the new relational table
+        for i, p in enumerate(payloads):
+            ri_p = p.get("round_info") or {}
+            round_num = int(ri_p.get("round_index") or ri_p.get("round") or (i + 1))
+            db.add(MatchPayload(
+                match_id=match_row.id,
+                round_number=round_num,
+                payload=json.dumps(p)
+            ))
         db.flush()
 
     # To calculate total stats, we keep track of values per guid
@@ -352,35 +415,39 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # Map to track cumulative session state *immediately before* the current round
     prev_unpacked_by_guid: dict[str, UnpackedWeaponStats] = {}
 
+    # --- PROTOCOL IDENTIFICATION ---
+    # Determine if we have a granular 'gamelog' (Modern API v2.x)
+    has_gamelog_any = any((p.get("gamelog") is not None) or ( (p.get("round_info") or {}).get("gamelog") is not None) for p in payloads)
+    
     # --- CLEAN RE-INGESTION LOGIC ---
-    # Delete the "Match Summary" row (round_index=0) as it must always be recalculated
-    # from all rounds (both existing in DB and the new payloads).
+    # We always wipe the "Total Score" (round_index=0) as it must be recalculated
+    # from the sum of all available rounds (both DB and new payloads).
     db.query(PlayerMatchStats).filter(
         PlayerMatchStats.match_id == match_row.id,
         PlayerMatchStats.round_index == 0
     ).delete()
 
-    # Identify the round indices we are about to ingest.
+    # Identify the round indices in the current payloads.
     payload_rounds = []
     for i, body in enumerate(payloads):
         ri = body.get("round_info") or {}
         r_idx = int(ri.get("round_index") or ri.get("round") or (i + 1))
         payload_rounds.append(r_idx)
 
-    # Delete existing round-specific stats only for the rounds we are currently ingesting.
-    # This prevents duplicates if we are reprocessing or updating a specific round.
+    # Delete existing round-specific stats ONLY for the rounds we are currently ingesting.
     db.query(PlayerMatchStats).filter(
         PlayerMatchStats.match_id == match_row.id,
         PlayerMatchStats.round_index.in_(payload_rounds)
     ).delete()
     db.flush()
 
-    # LOAD REMAINING ROUNDS FROM DB (the ones we are NOT replacing)
-    # to maintain continuity for the Total Match (round_index=0) row.
+    # --- LOAD ROUNDS FROM DB ---
+    # In a clean-slate reprocess, this will be empty. 
+    # For a rolling update (e.g. adding Round 2 to a live match), it loads Round 1.
     existing_stats = db.query(PlayerMatchStats).filter(
         PlayerMatchStats.match_id == match_row.id,
         PlayerMatchStats.round_index > 0
-    ).all()
+    ).order_by(PlayerMatchStats.round_index.asc()).all()
 
     for row in existing_stats:
         p = row.player
@@ -551,8 +618,50 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     first_team_by_guid[guid] = team
             
             ts = total_stats_by_guid[guid]
+            # --- EXTRACT METRICS (Protocol Dependent) ---
+            gamelog = body.get("gamelog") or round_info.get("gamelog")
 
+            # A) Event-Based Metrics (Modern Path)
+            em = compute_event_metrics(
+                player_guid=guid,
+                obituaries=obituaries,
+                damage_stats=damage_stats,
+                team_by_guid=team_by_guid,
+                gamelog=gamelog,
+                aliases=aliases
+            )
+
+            # B) Engine-Based Summary Metrics (Legacy Path & Validation)
             ws_raw = pdata.get("weaponStats") or []
+            unpacked = None
+            
+            dg = 0; dr = 0; tdg = 0; tdr = 0; gibs = 0; sk = 0; tk = 0; tg = 0; tpct = 0.0; xp = 0;
+            kills = 0; deaths = 0; revives = 0; medkits = 0; ammo_packs = 0;
+
+            if ws_raw:
+                try:
+                    unpacked = unpack_weapon_stats(ws_raw)
+                    # Mapping tail indices based on game-stats-web.lua facts:
+                    # [dg, dr, tdg, tdr, gibs, self_kills, team_kills, team_gibs, timePlayed%, xp]
+                    tail = unpacked.tail_raw or []
+                    if len(tail) >= 10:
+                        dg   = int(float(tail[0]))
+                        dr   = int(float(tail[1]))
+                        tdg  = int(float(tail[2]))
+                        tdr  = int(float(tail[3]))
+                        gibs = int(float(tail[4]))
+                        sk   = int(float(tail[5])) # self_kills
+                        tk   = int(float(tail[6])) # team_kills
+                        tg   = int(float(tail[7])) # team_gibs
+                        tpct = float(tail[8])      # timePlayed (%)
+                        xp   = int(float(tail[9]))
+                    
+                    # Core K/D from ps.persistant (head of stats string)
+                    kills = unpacked.kills
+                    deaths = unpacked.deaths
+                except Exception as e:
+                    print(f"DEBUG: Error unpacking weapon stats for {guid}: {e}")
+            
             if not isinstance(ws_raw, list):
                 ws_raw = []
                 
@@ -681,41 +790,64 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 prev_ws = {w.slot: w for w in p_unpacked.weapons} if p_unpacked else {}
                 for w in unpacked.weapons:
                     pw = prev_ws.get(w.slot)
-                    # Use deltas for the per-round row
+                    # Use deltas for the per-round row, handling engine resets
                     round_weapons.append({
                         "slot": w.slot,
                         "name": w.name,
-                        "hits": w.hits - (pw.hits if pw else 0),
-                        "shots": w.shots - (pw.shots if pw else 0),
-                        "kills": w.kills - (pw.kills if pw else 0),
-                        "deaths": w.deaths - (pw.deaths if pw else 0),
-                        "headshots": w.headshots - (pw.headshots if pw else 0),
+                        "hits": _calc_delta(w.hits, pw.hits if pw else 0),
+                        "shots": _calc_delta(w.shots, pw.shots if pw else 0),
+                        "kills": _calc_delta(w.kills, pw.kills if pw else 0),
+                        "deaths": _calc_delta(w.deaths, pw.deaths if pw else 0),
+                        "headshots": _calc_delta(w.headshots, pw.headshots if pw else 0),
                     })
             
-            # Other session deltas (Damage, Gibs, XP)
-            r_dg = dg - (p_unpacked.damage_given if p_unpacked else 0)
-            r_dr = dr - (p_unpacked.damage_received if p_unpacked else 0)
-            r_tdg = tdg - (p_unpacked.team_damage_given if p_unpacked else 0)
-            r_tdr = tdr - (p_unpacked.team_damage_received if p_unpacked else 0)
-            r_gibs = gibs - (p_unpacked.gibs if p_unpacked else 0)
-            r_sk = sk - (p_unpacked.self_kills if p_unpacked else 0)
-            r_tk = tk - (p_unpacked.team_kills if p_unpacked else 0)
-            r_tg = tg - (p_unpacked.team_gibs if p_unpacked else 0)
-            r_xp = xp - (p_unpacked.xp if p_unpacked else 0)
-            r_revives = revives - (p_unpacked.revives if p_unpacked and hasattr(p_unpacked, "revives") else 0)
-            r_medkits = medkits - (p_unpacked.medkits if p_unpacked and hasattr(p_unpacked, "medkits") else 0)
-            r_ammo_packs = ammo_packs - (p_unpacked.ammopacks if p_unpacked and hasattr(p_unpacked, "ammopacks") else 0)
+            # --- TRUTH TRACK BIFURCATION ---
+            if gamelog:
+                # MODERN: Discrete Event-Summing (Single Source of Truth)
+                r_dg = em.damage_given if hasattr(em, "damage_given") else _calc_delta(dg, p_unpacked.damage_given if p_unpacked else 0)
+                r_dr = em.damage_received if hasattr(em, "damage_received") else _calc_delta(dr, p_unpacked.damage_received if p_unpacked else 0)
+                r_tdg = _calc_delta(tdg, p_unpacked.team_damage_given if p_unpacked else 0)
+                r_tdr = _calc_delta(tdr, p_unpacked.team_damage_received if p_unpacked else 0)
+                
+                r_gibs = _calc_delta(gibs, p_unpacked.gibs if p_unpacked else 0)
+                r_tg = _calc_delta(tg, p_unpacked.team_gibs if p_unpacked else 0)
+                r_xp = _calc_delta(xp, p_unpacked.xp if p_unpacked else 0)
+                
+                # These tactical fields are the absolute source of truth in the gamelog
+                r_sk = em.self_kills
+                r_tk = em.team_kills
+                r_revives = em.revives
+                r_medkits = em.team_medpacks
+                r_ammo_packs = em.team_ammopacks
+                r_kills = em.kills
+                r_deaths = em.deaths
+                r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
+            else:
+                # LEGACY: Cumulative Engine Deltas
+                r_dg = _calc_delta(dg, p_unpacked.damage_given if p_unpacked else 0)
+                r_dr = _calc_delta(dr, p_unpacked.damage_received if p_unpacked else 0)
+                r_tdg = _calc_delta(tdg, p_unpacked.team_damage_given if p_unpacked else 0)
+                r_tdr = _calc_delta(tdr, p_unpacked.team_damage_received if p_unpacked else 0)
+                r_gibs = _calc_delta(gibs, p_unpacked.gibs if p_unpacked else 0)
+                r_sk = _calc_delta(sk, p_unpacked.self_kills if p_unpacked else 0)
+                r_tk = _calc_delta(tk, p_unpacked.team_kills if p_unpacked else 0)
+                r_tg = _calc_delta(tg, p_unpacked.team_gibs if p_unpacked else 0)
+                r_xp = _calc_delta(xp, p_unpacked.xp if p_unpacked else 0)
+                r_revives = em.revives # Fallback Syringe count calculated in EventMetrics
+                r_medkits = em.team_medpacks
+                r_ammo_packs = em.team_ammopacks
+                r_kills = _calc_delta(kills, p_unpacked.kills if p_unpacked else 0)
+                r_deaths = _calc_delta(deaths, p_unpacked.deaths if p_unpacked else 0)
+                r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
             
-            r_kills = kills - (p_unpacked.kills if p_unpacked and not gamelog else 0)
-            r_deaths = deaths - (p_unpacked.deaths if p_unpacked and not gamelog else 0)
-            
-            r_spawn_count = spawn_count - (int(p_prev_data.get("spawn_count") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
+            p_prev_pdata = getattr(p_unpacked, "pdata_ref", None) if p_unpacked else None
+            r_spawn_count = _calc_delta(spawn_count, int(p_prev_pdata.get("spawn_count") or 0) if p_prev_pdata else 0)
             
             # Stances and Distance deltas
-            r_dist_m = dist_m - (float(p_prev_data.get("distance_travelled_meters") or 0.0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0.0)
-            r_crouch = crouch - (int((p_prev_data.get("stance_stats_seconds") or {}).get("in_crouch") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
-            r_prone = prone - (int((p_prev_data.get("stance_stats_seconds") or {}).get("in_prone") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
-            r_lean = lean - (int((p_prev_data.get("stance_stats_seconds") or {}).get("in_lean") or 0) if (p_prev_data := getattr(p_unpacked, "pdata_ref", None)) else 0)
+            r_dist_m = _calc_delta(dist_m, float(p_prev_pdata.get("distance_travelled_meters") or 0.0) if p_prev_pdata else 0.0)
+            r_crouch = _calc_delta(crouch, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_crouch") or 0) if p_prev_pdata else 0)
+            r_prone = _calc_delta(prone, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_prone") or 0) if p_prev_pdata else 0)
+            r_lean = _calc_delta(lean, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_lean") or 0) if p_prev_pdata else 0)
 
             eff_round, kdr_round = _eff_kdr(r_kills, r_deaths, r_sk)
 
@@ -723,7 +855,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 match_id=match_row.id,
                 player_id=player.id,
                 round_index=round_index,
-                team=team, # Use the round-specific team, not the match-accumulated one
+                team=team, 
                 kills=r_kills,
                 deaths=r_deaths,
                 kdr=kdr_round,
@@ -733,12 +865,12 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 damage_received=r_dr,
                 team_damage_given=r_tdg,
                 team_damage_received=r_tdr,
-                headshots=em.headshot_hits,
+                headshots=em.headshot_hits, # Already a delta from EventMetrics
                 gibs=r_gibs,
                 self_kills=r_sk,
                 team_kills=r_tk,
                 team_gibs=r_tg,
-                time_played_pct=tpct - (p_unpacked.time_played_pct if p_unpacked else 0.0),
+                time_played_pct=r_time_played_pct,
                 xp=r_xp,
                 revives=r_revives,
                 medkits=r_medkits,
@@ -770,45 +902,33 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 setattr(unpacked, "pdata_ref", pdata) # hack to store raw pdata for numeric deltas
                 prev_unpacked_by_guid[guid] = unpacked
 
-            # Add to total (Cumulative Session Stats - using max)
-            ts.damage_given = max(ts.damage_given, dg)
-            ts.damage_received = max(ts.damage_received, dr)
-            ts.team_damage_given = max(ts.team_damage_given, tdg)
-            ts.team_damage_received = max(ts.team_damage_received, tdr)
-            ts.gibs = max(ts.gibs, gibs)
-            ts.self_kills = max(ts.self_kills, sk)
-            ts.team_kills = max(ts.team_kills, tk)
-            ts.team_gibs = max(ts.team_gibs, tg)
-            ts.xp = max(ts.xp, xp)
-            ts.spawn_count = max(ts.spawn_count, spawn_count)
-            ts.speed_ups_avg = max(ts.speed_ups_avg, ups_avg)
+            # Add to total (Cumulative Summation of Deltas)
+            # This is robust to session resets/reconnections between rounds
+            ts.damage_given += r_dg
+            ts.damage_received += r_dr
+            ts.team_damage_given += r_tdg
+            ts.team_damage_received += r_tdr
+            ts.gibs += r_gibs
+            ts.self_kills += r_sk
+            ts.team_kills += r_tk
+            ts.team_gibs += r_tg
+            ts.xp += r_xp
+            ts.spawn_count += r_spawn_count
+            ts.speed_ups_avg = max(ts.speed_ups_avg, ups_avg) # speed is session-wide peak usually
             ts.speed_ups_peak = max(ts.speed_ups_peak, ups_peak)
             ts.distance_travelled_spawn_avg = max(ts.distance_travelled_spawn_avg, dist_sa)
-            ts.distance_travelled_meters = max(ts.distance_travelled_meters, dist_m)
-            ts.crouched_seconds = max(ts.crouched_seconds, crouch)
-            ts.proned_seconds = max(ts.proned_seconds, prone)
-            ts.leaned_seconds = max(ts.leaned_seconds, lean)
+            ts.distance_travelled_meters += r_dist_m
+            ts.crouched_seconds += r_crouch
+            ts.proned_seconds += r_prone
+            ts.leaned_seconds += r_lean
             
-            # Add to total (Event-based or Delta-based Stats)
-            if gamelog:
-                ts.kills += em.kills
-                ts.deaths += em.deaths
-                ts.revives += revives # Use the corrected 'revives'
-                ts.medkits += medkits # Use the corrected 'medkits'
-                ts.team_medpacks += ammo_packs # Use the corrected 'ammo_packs'
-                ts.headshots += em.headshot_hits
-                ts.headshot_hits += em.headshot_hits
-                ts.shots_recorded += em.shots_recorded
-            else:
-                # Legacy fallback: use max for session totals if we don't have a gamelog to aggregate
-                ts.kills = max(ts.kills, kills)
-                ts.deaths = max(ts.deaths, deaths)
-                ts.revives = max(ts.revives, revives)
-                ts.medkits = max(ts.medkits, medkits)
-                ts.team_medpacks = max(ts.team_medpacks, ammo_packs)
-                ts.headshots = max(ts.headshots, em.headshot_hits)
-                ts.headshot_hits = max(ts.headshot_hits, em.headshot_hits)
-                ts.shots_recorded = max(ts.shots_recorded, em.shots_recorded)
+            ts.kills += r_kills
+            ts.deaths += r_deaths
+            ts.revives += r_revives
+            ts.medkits += r_medkits
+            ts.team_medpacks += r_ammo_packs
+            ts.headshot_hits += em.headshot_hits
+            ts.shots_recorded += em.shots_recorded
 
             ts.spam_kills += spam_kills
             if classes_played:

@@ -172,7 +172,7 @@ export type Leaderboards = {
   sharpshooter: LeaderboardEntry[]
 }
 
-export type BalancePlayer = { guid: string; name: string; rating: number; slot?: number }
+export type BalancePlayer = { guid: string; name: string; rating: number; slot?: number; role: string }
 export type BalanceResponse = {
   alpha: BalancePlayer[]
   beta: BalancePlayer[]
