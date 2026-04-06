@@ -2,8 +2,9 @@ import os
 import glob
 import json
 from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Optional, Any
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
@@ -13,13 +14,16 @@ from app.utils import SLOW_QUERIES, record_slow_query
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+class ReprocessRequest(BaseModel):
+    match_ids: Optional[List[int]] = None
+
 @router.post("/reprocess")
-def reprocess_matches(match_ids: Optional[List[int]] = None, db: Session = Depends(get_db)):
+def reprocess_matches(req: ReprocessRequest, db: Session = Depends(get_db)):
     """
-    Reprocesses existing matches from their JSON source files.
-    If match_ids is provided, only those database IDs are reprocessed.
-    If None, all matches in the database are reprocessed.
+    Reprocesses existing matches from their JSON source files or relational payloads.
+    If req.match_ids is provided, only those database IDs are reprocessed.
     """
+    match_ids = req.match_ids
     if match_ids:
         matches = db.query(Match).filter(Match.id.in_(match_ids)).all()
     else:
