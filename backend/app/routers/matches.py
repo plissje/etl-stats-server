@@ -209,18 +209,18 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             best_score = score
             mvp = pl
 
+    # Resolve Alpha/Beta side metadata from the new relational payloads table
     r1_alpha_side, r2_alpha_side = None, None
-    if m.raw_payload:
+    from app.models import MatchPayload
+    payload_rows = db.query(MatchPayload).filter(MatchPayload.match_id == m.id).all()
+    for mp in payload_rows:
         try:
-            payloads = json.loads(m.raw_payload)
-            if isinstance(payloads, list):
-                for p in payloads:
-                    r_info = p.get("round_info") or {}
-                    ri = int(r_info.get("round_index") or r_info.get("round") or 0)
-                    # Oksii modular stats path: metadata -> scores -> round -> alpha_side
-                    side = p.get("metadata", {}).get("scores", {}).get("round", {}).get("alpha_side")
-                    if ri == 1: r1_alpha_side = side
-                    elif ri == 2: r2_alpha_side = side
+            p = json.loads(mp.payload)
+            ri = int(p.get("round_info", {}).get("round_index") or p.get("round_info", {}).get("round") or mp.round_number)
+            # Oksii modular stats path: metadata -> scores -> round -> alpha_side
+            side = p.get("metadata", {}).get("scores", {}).get("round", {}).get("alpha_side")
+            if ri == 1: r1_alpha_side = side
+            elif ri == 2: r2_alpha_side = side
         except:
             pass
 

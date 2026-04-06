@@ -455,6 +455,11 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         player_db_by_guid[guid] = p
         if guid not in total_stats_by_guid:
             total_stats_by_guid[guid] = TotalStat(row.name_raw or "", p.display_name or "", row.team)
+            if row.team in (1, 2):
+                first_team_by_guid[guid] = row.team
+        else:
+            if guid not in first_team_by_guid and row.team in (1, 2):
+                first_team_by_guid[guid] = row.team
         
         ts = total_stats_by_guid[guid]
         ts.kills += row.kills
