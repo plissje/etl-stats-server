@@ -93,17 +93,19 @@ def calculate_openskill_ratings(
         old_perfs: list[PlayerPerformance],
         old_ratings: list[Any],
         new_ratings: list[Any],
-        team_avg_score: float
+        reference_avg_score: float,
+        is_winner: bool
     ) -> list[RatingResult]:
         results = []
         for p, old_r, new_r in zip(old_perfs, old_ratings, new_ratings):
             mu_delta_team = new_r.mu - old_r.mu
             
-            # Individual Performance Boost (Relative to TEAM average)
+            # Individual Performance Boost (Relative to LOBBY average)
+            # This ensures that in a dominant win, the whole team can gain SR together.
             player_score = get_score(p)
             
-            # Ratio: how much better/worse were they than the team average?
-            ratio = player_score / max(1.0, team_avg_score)
+            # Ratio: how much better/worse were they than the reference average?
+            ratio = player_score / max(1.0, reference_avg_score)
             
             # Symmetric Boost logic: (Ratio - 1.0) * Sensitivity
             # Sensitivity 1.5 allows for clear skill separation while keeping growth gradual.
@@ -111,6 +113,13 @@ def calculate_openskill_ratings(
             
             # 70/30 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
             total_mu_change = (mu_delta_team * 0.3) + (individual_performance_boost * 0.7)
+            
+            # WIN FLOOR: Always gain something (or at least don't lose) on a win.
+            # This prevents 1 outlier performance from tanking the SR of the rest of the team.
+            if is_winner:
+                # We floor at 0.0 to ensure a win never results in a loss. 
+                # A tiny positive (0.01) could be used but 0.0 is the most mathematically neutral.
+                total_mu_change = max(0.005, total_mu_change)
             
             # HARD BOUNDS: Prevent rating explosion (capped at +/- 1.0 mu per game)
             total_mu_change = max(-1.0, min(1.0, total_mu_change))
@@ -129,12 +138,14 @@ def calculate_openskill_ratings(
             )
         return results
 
-    # Calculate average scores per team
-    t1_avg = sum(get_score(p) for p in team1_perfs) / len(team1_perfs) if team1_perfs else 0.0
-    t2_avg = sum(get_score(p) for p in team2_perfs) / len(team2_perfs) if team2_perfs else 0.0
-
-    res1 = compute_modified_team(team1_perfs, team1_ratings, new_teams[0], t1_avg)
-    res2 = compute_modified_team(team2_perfs, team2_ratings, new_teams[1], t2_avg)
+    # Calculate average scores across the entire LOBBY
+    # This ensures that in a stomp, everyone on the winning team can gain SR
+    # and prevents one superstar from hurting their teammates' ratings.
+    all_playing_scores = [get_score(p) for p in playing]
+    lobby_avg = sum(all_playing_scores) / len(all_playing_scores) if all_playing_scores else 1.0
+    
+    res1 = compute_modified_team(team1_perfs, team1_ratings, new_teams[0], lobby_avg, is_winner=(winner_team == 1))
+    res2 = compute_modified_team(team2_perfs, team2_ratings, new_teams[1], lobby_avg, is_winner=(winner_team == 2))
 
     # Combine back to original list format to preserve any spectators as 0 changes
     results_map = {r.player_id: r for r in res1 + res2}
