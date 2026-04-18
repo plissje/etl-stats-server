@@ -40,6 +40,9 @@ class MoveResponse(BaseModel):
     commands_sent: int
     details: str
 
+class MapChangeRequest(BaseModel):
+    map_name: str
+
 @router.get("/players", response_model=PlayerListResponse)
 async def get_players(db: Session = Depends(get_db)):
     # 1. Trigger the custom Lua API to refresh the cache
@@ -218,4 +221,17 @@ async def move_players(req: BatchMoveRequest):
         commands_sent=commands_sent, 
         details=f"Issued {commands_sent} RCON commands ({len(delta_moves)} players moved) with 150ms spacing."
     )
+
+
+@router.post("/change-map", response_model=dict)
+async def change_map(req: MapChangeRequest):
+    if not req.map_name:
+        raise HTTPException(status_code=400, detail="Map name is required")
+        
+    cmd = f"ref map {req.map_name}"
+    try:
+        response = await send_rcon_command(cmd, timeout=2.0)
+        return {"success": True, "details": f"Map change command issued: {cmd}", "rcon_response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to issue map change: {str(e)}")
 

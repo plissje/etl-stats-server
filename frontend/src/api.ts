@@ -215,6 +215,16 @@ export async function searchPlayers(q: string = '', skip: number = 0, limit: num
   return r.json()
 }
 
+export async function changeMap(mapName: string): Promise<{ success: boolean; details: string }> {
+  const r = await fetch('/api/server/change-map', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ map_name: mapName })
+  })
+  if (!r.ok) throw new Error('failed to change map')
+  return r.json()
+}
+
 export async function balanceTeams(players: PlayerIdentifier[], variations: boolean = false): Promise<BalanceResponse> {
   const response = await fetch('/api/balancer/balance', {
     method: 'POST',

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  searchPlayers, balanceTeams, fetchLivePlayers, movePlayersToTeams,
+  searchPlayers, balanceTeams, fetchLivePlayers, movePlayersToTeams, fetchMaps, changeMap,
   type LeaderboardEntry, type BalanceResponse, type PlayerIdentifier
 } from '../api'
 import { QuakeName } from '../components/QuakeName'
@@ -20,6 +20,11 @@ export function Balancing() {
   const [lastBalance, setLastBalance] = useState<BalanceResponse | null>(null)
   const [moving, setMoving] = useState(false)
   const [moveStatus, setMoveStatus] = useState<{ success: boolean; message: string } | null>(null)
+  
+  const [availableMaps, setAvailableMaps] = useState<string[]>([])
+  const [selectedMap, setSelectedMap] = useState('')
+  const [changingMap, setChangingMap] = useState(false)
+  const [mapStatus, setMapStatus] = useState<{ success: boolean; message: string } | null>(null)
 
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -44,6 +49,11 @@ export function Balancing() {
       setTimeout(() => setAuthError(false), 600)
     }
   }
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    fetchMaps().then(setAvailableMaps).catch(console.error)
+  }, [isAuthenticated])
 
   useEffect(() => {
     if (!isAuthenticated) return
@@ -142,6 +152,22 @@ export function Balancing() {
 
   const removePlayer = (id: string) => {
     setSelectedPlayers(selectedPlayers.filter(p => p.id !== id))
+  }
+
+  const handleMapChange = async () => {
+    if (!selectedMap) return
+    if (!window.confirm(`Are you sure you want to change map to ${selectedMap}?`)) return
+    
+    setChangingMap(true)
+    setMapStatus(null)
+    try {
+      const res = await changeMap(selectedMap)
+      setMapStatus({ success: true, message: res.details })
+    } catch (e) {
+      setMapStatus({ success: false, message: e instanceof Error ? e.message : 'Map change failed' })
+    } finally {
+      setChangingMap(false)
+    }
   }
 
   const handleMoveInGame = async () => {
@@ -424,6 +450,48 @@ export function Balancing() {
               </button>
             </div>
             {error && <div className="text-rose-500 text-xs text-center border border-rose-500/20 bg-rose-500/5 p-2 rounded-lg">{error}</div>}
+          </div>
+
+          {/* Map Operations Card */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl p-6 space-y-4 shadow-xl">
+             <h3 className="text-zinc-100 font-bold flex items-center gap-2">
+                <span className="w-1.5 h-5 bg-amber-500 rounded-full" />
+                Map Operations
+             </h3>
+             <div className="flex flex-col md:flex-row gap-3">
+                <div className="flex-1 relative">
+                    <input 
+                      list="admin-map-list"
+                      placeholder="Select target map..." 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-300 focus:outline-none focus:border-amber-500/50 transition shadow-inner"
+                      value={selectedMap} 
+                      onChange={e => setSelectedMap(e.target.value)} 
+                    />
+                    <datalist id="admin-map-list">
+                      {availableMaps.map(m => <option key={m} value={m} />)}
+                      {/* Common fallbacks if map history is empty */}
+                      {!availableMaps.includes('oasis') && <option value="oasis" />}
+                      {!availableMaps.includes('mp_bin') && <option value="mp_bin" />}
+                      {!availableMaps.includes('radar') && <option value="radar" />}
+                      {!availableMaps.includes('fueldump') && <option value="fueldump" />}
+                    </datalist>
+                </div>
+                <button
+                  onClick={handleMapChange}
+                  disabled={changingMap || !selectedMap}
+                  className="bg-amber-600 hover:bg-amber-500 text-white font-black px-6 py-3 rounded-xl transition shadow-[0_0_20px_rgba(245,158,11,0.1)] disabled:opacity-30 disabled:cursor-not-allowed uppercase tracking-widest text-[11px] whitespace-nowrap"
+                >
+                  {changingMap ? 'Issuing...' : 'Change Map'}
+                </button>
+             </div>
+             {mapStatus && (
+                <div className={`text-[10px] font-bold uppercase tracking-widest p-2 rounded-lg border flex items-center gap-2 ${
+                  mapStatus.success ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/5 border-rose-500/20 text-rose-400'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${mapStatus.success ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                  {mapStatus.message}
+                </div>
+             )}
           </div>
         </div>
 
