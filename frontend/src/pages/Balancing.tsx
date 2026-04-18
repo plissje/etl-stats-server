@@ -52,12 +52,12 @@ export function Balancing() {
       return
     }
     const t = setTimeout(() => {
-      searchPlayers(searchQuery).then(setSearchResults).catch(console.error)
+      searchPlayers(searchQuery).then(res => setSearchResults(res.players)).catch(console.error)
     }, 300)
     return () => clearTimeout(t)
   }, [searchQuery])
 
-  const handleBalance = async () => {
+  const handleBalance = async (useVariations: boolean = false) => {
     const manualLines = manualInput.split('\n').map(s => s.trim()).filter(Boolean)
     const activeSelected = ignoreSpecs 
         ? selectedPlayers.filter(p => !p.team || p.team !== 'Spectator')
@@ -76,7 +76,7 @@ export function Balancing() {
     setLoading(true)
     setError('')
     try {
-      const res = await balanceTeams(allPlayers)
+      const res = await balanceTeams(allPlayers, useVariations)
       setResult(res)
       setLastBalance(res)
       setMoveStatus(null)
@@ -151,13 +151,17 @@ export function Balancing() {
     setMoveStatus(null)
     
     try {
-      const moves: { slot: number, team: string }[] = []
+      const moves: { slot: number, team: string, name: string, origin_team?: string }[] = []
       
       lastBalance.alpha.forEach(p => {
-        if (p.slot !== undefined) moves.push({ slot: p.slot, team: 'Axis' })
+        if (p.slot !== undefined && p.slot !== null) {
+          moves.push({ slot: p.slot, team: 'Axis', name: p.name, origin_team: p.origin_team || 'Spectator' })
+        }
       })
       lastBalance.beta.forEach(p => {
-        if (p.slot !== undefined) moves.push({ slot: p.slot, team: 'Allies' })
+        if (p.slot !== undefined && p.slot !== null) {
+          moves.push({ slot: p.slot, team: 'Allies', name: p.name, origin_team: p.origin_team || 'Spectator' })
+        }
       })
       
       if (moves.length === 0) {
@@ -402,13 +406,23 @@ export function Balancing() {
               />
             </div>
 
-            <button
-              className="w-full bg-violet-600 hover:bg-violet-500 text-white font-black py-4 rounded-xl transition shadow-[0_0_20px_rgba(139,92,246,0.2)] disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-widest text-sm"
-              onClick={handleBalance}
-              disabled={loading}
-            >
-              {loading ? 'Processing...' : 'Auto-Balance Teams'}
-            </button>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 bg-violet-600 hover:bg-violet-500 text-white font-black py-4 rounded-xl transition shadow-[0_0_20px_rgba(139,92,246,0.2)] disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-widest text-sm"
+                onClick={() => handleBalance(false)}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : 'Auto-Balance Teams'}
+              </button>
+              <button
+                className="px-6 bg-zinc-800 hover:bg-zinc-700 text-violet-400 font-black py-4 rounded-xl transition border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-widest text-sm whitespace-nowrap"
+                onClick={() => handleBalance(true)}
+                disabled={loading}
+                title="Generates team variations by adding slight SR noise during draft"
+              >
+                Reshuffle
+              </button>
+            </div>
             {error && <div className="text-rose-500 text-xs text-center border border-rose-500/20 bg-rose-500/5 p-2 rounded-lg">{error}</div>}
           </div>
         </div>

@@ -15,7 +15,7 @@ from app.models import (
     MatchPayload,
 )
 from app.parsers.events import compute_event_metrics, hs_accuracy, nemesis_to_json
-from app.parsers.names import strip_quake_colors
+from app.parsers.names import strip_quake_colors, normalize_nick
 from app.parsers.weapon_stats import UnpackedWeaponStats, revives_from_unpacked, unpack_weapon_stats
 from app.parsers.weapon_classes import ClassTimelineTracker
 from app.rating import PlayerPerformance, calculate_openskill_ratings, compute_display_rating
@@ -67,9 +67,9 @@ def _weapon_breakdown_json_from_dict(weapons: dict[int, dict] | None) -> str | N
     return json.dumps(rows)
 
 
-def _eff_kdr(kills: int, deaths: int, self_kills: int = 0) -> tuple[float, float]:
-    eff = round(100.0 * kills / max(1, kills + deaths + self_kills), 1)
-    kdr = round(kills / max(1, deaths), 2)
+def _eff_kdr(kills: int, combat_deaths: int) -> tuple[float, float]:
+    eff = round(100.0 * kills / max(1, kills + combat_deaths), 1)
+    kdr = round(kills / max(1, combat_deaths), 2)
     return eff, kdr
 
 
@@ -83,12 +83,15 @@ def _calc_delta(current: int | float, previous: int | float | None) -> int | flo
     return delta
 
 
-def _calculate_unified_eff(kills: int, revives: int, damage_given: int, xp: int, deaths: int, self_kills: int) -> float:
-    # Unified Points formula from rating.py
-    # 0.33 per Revive (1/3 of a kill), 0.1 per XP
-    # Self-kills weighted at 0.25 — tactical in ET:Legacy, not equivalent to enemy death
+def _calculate_unified_eff(kills: int, revives: int, damage_given: int, xp: int, combat_deaths: int, self_kills: int) -> float:
+    # Unified Points formula
+    # ET: Legacy tactical weights: 0.33 per Revive, 0.1 per XP
     points = kills + (revives * 0.33) + (damage_given / 100.0) + (xp * 0.1)
-    total_actions = points + deaths + (self_kills * 0.25)
+    
+    # Total Actions denominator:
+    # Combat deaths count as 1.0 (regular death)
+    # Self-kills weighted at 0.25 (as requested)
+    total_actions = points + combat_deaths + (self_kills * 0.25)
     if total_actions <= 0:
         return 0.0
     return round((points / total_actions) * 100.0, 1)
@@ -129,7 +132,7 @@ def load_aliases() -> dict[str, str]:
         return {}
 
 
-def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw: bool = True) -> Match:
+def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw: bool = True, target_db_match_id: int = None) -> Match:
     if not payloads:
         raise ValueError("no payloads provided")
 
@@ -205,7 +208,28 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # Alignment: Oksii moved global fields to 'metadata'
     metadata_primary = primary.get("metadata") or {}
 
-    match_id = str(metadata_primary.get("matchID") or round_info_primary.get("matchID") or primary.get("matchID") or "")
+    match_id = ""
+    # If the caller forces a DB match, use its string ID to bind the payloads
+    if target_db_match_id:
+        from app.models import Match
+        existing_target = db.query(Match).filter(Match.id == target_db_match_id).one_or_none()
+        if existing_target:
+            match_id = existing_target.match_id
+            
+    # Failing that, find a match ID that actually exists in the database from the payloads
+    if not match_id:
+        from app.models import Match
+        for p in payloads:
+            m_id = str(p.get("metadata", {}).get("matchID") or p.get("round_info", {}).get("matchID") or p.get("matchID") or "")
+            if m_id:
+                if db.query(Match).filter(Match.match_id == m_id).first():
+                    match_id = m_id
+                    break
+
+    # Fallback to the first payload if no existing match is found
+    if not match_id:
+        match_id = str(metadata_primary.get("matchID") or round_info_primary.get("matchID") or primary.get("matchID") or "")
+        
     if not match_id:
         raise ValueError("missing matchID")
 
@@ -235,18 +259,39 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         d1 = int(r1.get("round_end_unix") or 0) - int(r1.get("round_start_unix") or 0)
         d2 = int(r2.get("round_end_unix") or 0) - int(r2.get("round_start_unix") or 0)
         
-        if w1 > 0 and w2 > 0 and w1 != w2:
-            # Both teams won their round. Faster duration wins the match.
-            if d1 > 0 and d2 > 0:
-                winner_team = w1 if d1 <= d2 else w2
+        if w1 > 0 and w2 > 0:
+            # Both teams won their round.
+            # In Stopwatch, winnerteam=1 (Axis) in both rounds means a Full Hold for each team (Draw).
+            if w1 == 1 and w2 == 1:
+                if d1 == d2:
+                    winner_team = 0 # Double Full Hold -> Draw
+                elif d1 < d2:
+                    winner_team = w1
+                else:
+                    winner_team = w2
+            elif w1 != w2:
+                # One team won as Axis, other won as Allies.
+                # Standard duration comparison.
+                if d1 > 0 and d2 > 0:
+                    if d1 < d2:
+                        winner_team = w1
+                    elif d2 < d1:
+                        winner_team = w2
+                    else:
+                        winner_team = 0 # Draw
+                else:
+                    winner_team = w2 # Fallback
             else:
-                winner_team = w2 # Fallback to last round if durations missing
-        elif w1 > 0 and w2 <= 0:
+                # Both won as Allies (index 2)? Rare but same logic.
+                if d1 < d2: winner_team = w1
+                elif d2 < d1: winner_team = w2
+                else: winner_team = 0
+        elif w1 > 0:
             winner_team = w1
         elif w2 > 0:
             winner_team = w2
         else:
-            winner_team = w2 # Fallback
+            winner_team = 0
     else:
         # Single round or more than 2 rounds: take the last known result
         winner_team = int(payloads[-1].get("round_info", {}).get("winnerteam") or round_info_primary.get("winnerteam") or 0)
@@ -260,13 +305,14 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     if not existing:
         # 2. Heuristic: Check for a recent match on the same map (within 30 mins)
         # This allows Round 2 to merge even if it was assigned a different Match ID.
-        now_unix = int(datetime.utcnow().timestamp())
-        recent_threshold = now_unix - (30 * 60)
+        # Anchor threshold to the round start time (rs) to support historical reprocessing.
+        recent_threshold = rs - (30 * 60)
         
         recent_match = (
             db.query(Match)
             .filter(Match.mapname == mapname)
-            .filter(Match.round_end_unix > recent_threshold)
+            .filter(Match.round_end_unix >= recent_threshold)
+            .filter(Match.round_end_unix <= rs)
             .order_by(Match.round_end_unix.desc())
             .first()
         )
@@ -293,6 +339,24 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ri_p = p.get("round_info") or {}
             round_num = int(ri_p.get("round_index") or ri_p.get("round") or (i + 1))
             
+            # SEQUENCE CORRECTION: If Round 1 already exists but from a DIFFERENT start time,
+            # we treat this as the next round (typical for fragmented matches like Match 155/171).
+            if round_num == 1:
+                existing_r1 = db.query(MatchPayload).filter(
+                    MatchPayload.match_id == existing.id,
+                    MatchPayload.round_number == 1
+                ).one_or_none()
+                if existing_r1:
+                    try:
+                        ex_p = json.loads(existing_r1.payload)
+                        ex_rs = int((ex_p.get("round_info") or {}).get("round_start_unix") or 0)
+                        cu_rs = int(ri_p.get("round_start_unix") or 0)
+                        if ex_rs > 0 and cu_rs > 0 and cu_rs > ex_rs:
+                            print(f"DEBUG: Found Round 1 collision for Match {existing.id}. New round starts later ({cu_rs} > {ex_rs}) - remapping to Round 2.")
+                            round_num = 2
+                    except:
+                        pass
+
             # Upsert logic for the specific round
             existing_payload_row = db.query(MatchPayload).filter(
                 MatchPayload.match_id == existing.id,
@@ -380,7 +444,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             self.display = display
             self.team = team
             self.kills = 0
-            self.deaths = 0
+            self.deaths = 0 # Now represents COMBAT deaths (enemy-inflicted)
+            self.team_deaths_received = 0
             self.damage_given = 0
             self.damage_received = 0
             self.team_damage_given = 0
@@ -566,7 +631,6 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         class_tracker = ClassTimelineTracker(gamelog or [])
 
         team_by_guid: dict[str, int] = {}
-        first_team_by_guid: dict[str, int] = {} # Fix: Track the team they started the match with
         
         # ... later in the final total stats loop we'll use this
         for g, pdata in player_stats.items():
@@ -584,6 +648,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
 
             name_raw = str(pdata.get("name") or "")
             display = strip_quake_colors(name_raw) or guid[:8]
+            display_normalized = normalize_nick(name_raw) or display
 
             team = int(pdata.get("team") or 0)
             if team not in (1, 2):
@@ -596,19 +661,22 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     db.add(player)
                     db.flush()
                 else:
-                    player.display_name = display or player.display_name
+                    # Update with cleaned name unless it's empty
+                    player.display_name = display_normalized or player.display_name
                     player.raw_name_last = name_raw or player.raw_name_last
                 player_db_by_guid[guid] = player
             else:
                 player = player_db_by_guid[guid]
             
-            # Record alias
+            # Record both the original cleaned name and the normalized one as aliases
             from app.models import PlayerAlias
-            existing_alias = db.query(PlayerAlias).filter(PlayerAlias.player_id == player.id, PlayerAlias.alias == display).first()
-            if not existing_alias:
-                db.add(PlayerAlias(player_id=player.id, alias=display))
-            else:
-                existing_alias.last_seen = datetime.utcnow()
+            for name_to_record in set([display, display_normalized]):
+                if not name_to_record: continue
+                existing_alias = db.query(PlayerAlias).filter(PlayerAlias.player_id == player.id, PlayerAlias.alias == name_to_record).first()
+                if not existing_alias:
+                    db.add(PlayerAlias(player_id=player.id, alias=name_to_record))
+                else:
+                    existing_alias.last_seen = datetime.utcnow()
 
             # Determine match-wide team identity
             # We prioritize the current round's team from player_stats
@@ -647,24 +715,20 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             if ws_raw:
                 try:
                     unpacked = unpack_weapon_stats(ws_raw)
-                    # Mapping tail indices based on game-stats-web.lua facts:
-                    # [dg, dr, tdg, tdr, gibs, self_kills, team_kills, team_gibs, timePlayed%, xp]
-                    tail = unpacked.tail_raw or []
-                    if len(tail) >= 10:
-                        dg   = int(float(tail[0]))
-                        dr   = int(float(tail[1]))
-                        tdg  = int(float(tail[2]))
-                        tdr  = int(float(tail[3]))
-                        gibs = int(float(tail[4]))
-                        sk   = int(float(tail[5])) # self_kills
-                        tk   = int(float(tail[6])) # team_kills
-                        tg   = int(float(tail[7])) # team_gibs
-                        tpct = float(tail[8])      # timePlayed (%)
-                        xp   = int(float(tail[9]))
-                    
-                    # Core K/D from ps.persistant (head of stats string)
-                    kills = unpacked.kills
-                    deaths = unpacked.deaths
+                    if unpacked:
+                        dg   = unpacked.damage_given
+                        dr   = unpacked.damage_received
+                        tdg  = unpacked.team_damage_given
+                        tdr  = unpacked.team_damage_received
+                        gibs = unpacked.gibs
+                        sk   = unpacked.self_kills
+                        tk   = unpacked.team_kills
+                        tg   = unpacked.team_gibs
+                        tpct = unpacked.time_played_pct
+                        xp   = unpacked.xp
+                        
+                        kills = unpacked.kills
+                        deaths = unpacked.deaths
                 except Exception as e:
                     print(f"DEBUG: Error unpacking weapon stats for {guid}: {e}")
             
@@ -683,8 +747,22 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             em = compute_event_metrics(guid, obituaries, damage_stats, team_by_guid, gamelog, aliases=aliases)
             
             # ALIGNMENT: Prefer event-based stats if available, fall back to pdata for legacy
-            kills = em.kills if em.kills > 0 else int(pdata.get("kills") or 0)
-            deaths = em.deaths if em.deaths > 0 else int(pdata.get("deaths") or 0)
+            kills_raw = em.kills if em.kills > 0 else int(pdata.get("kills") or 0)
+            deaths_all_raw = em.deaths if em.deaths > 0 else int(pdata.get("deaths") or 0) # total deaths from engine
+            
+            # Derived Combat Deaths: Total Deaths - Self Kills - Team Deaths
+            sk_raw = 0
+            tk_rec_raw = 0
+            
+            if unpacked:
+                sk_raw = unpacked.self_kills
+            elif em:
+                sk_raw = em.self_kills
+            
+            if em:
+                tk_rec_raw = em.team_deaths_received
+            
+            combat_deaths = max(0, deaths_all_raw - sk_raw - tk_rec_raw)
 
             dg = dr = tdg = tdr = gibs = sk = tk = tg = 0
             tpct = 0.0
@@ -736,11 +814,11 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             if medkits == 0: medkits = int(pdata.get("medkits") or 0)
             if ammo_packs == 0: ammo_packs = int(pdata.get("ammopacks") or 0)
 
-            eff, kdr = _eff_kdr(kills, deaths, sk)
-            # Unified Efficiency calculation for the round row (v6 logic)
-            # 0.33 per Revive, 0.1 per XP
-            u_points = kills + (revives * 0.33) + (dg / 100.0) + (xp * 0.1)
-            u_actions = u_points + deaths + sk
+            eff, kdr = _eff_kdr(kills_raw, combat_deaths)
+            # Unified Efficiency calculation for the round row
+            # Self-kills weighted at 0.25
+            u_points = kills_raw + (revives * 0.33) + (dg / 100.0) + (xp * 0.1)
+            u_actions = u_points + combat_deaths + (sk_raw * 0.25)
             u_eff = round((u_points / max(1, u_actions)) * 100.0, 1)
 
             spam_kills = 0
@@ -826,7 +904,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 r_medkits = em.team_medpacks
                 r_ammo_packs = em.team_ammopacks
                 r_kills = em.kills
-                r_deaths = em.deaths
+                r_total_deaths = em.deaths
+                r_sk = em.self_kills
+                r_tk_rec = em.team_deaths_received
+                r_combat_deaths = max(0, r_total_deaths - r_sk - r_tk_rec)
                 r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
             else:
                 # LEGACY: Cumulative Engine Deltas
@@ -842,8 +923,12 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 r_revives = em.revives # Fallback Syringe count calculated in EventMetrics
                 r_medkits = em.team_medpacks
                 r_ammo_packs = em.team_ammopacks
-                r_kills = _calc_delta(kills, p_unpacked.kills if p_unpacked else 0)
-                r_deaths = _calc_delta(deaths, p_unpacked.deaths if p_unpacked else 0)
+                r_kills = _calc_delta(kills_raw, p_unpacked.kills if p_unpacked else 0)
+                # Engine total deaths delta
+                r_total_deaths = _calc_delta(deaths_all_raw, p_unpacked.deaths if p_unpacked else 0)
+                r_sk = _calc_delta(sk_raw, p_unpacked.self_kills if p_unpacked else 0)
+                r_tk_rec = em.team_deaths_received # Event-based is always a delta
+                r_combat_deaths = max(0, r_total_deaths - r_sk - r_tk_rec)
                 r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
             
             p_prev_pdata = getattr(p_unpacked, "pdata_ref", None) if p_unpacked else None
@@ -855,7 +940,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             r_prone = _calc_delta(prone, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_prone") or 0) if p_prev_pdata else 0)
             r_lean = _calc_delta(lean, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_lean") or 0) if p_prev_pdata else 0)
 
-            eff_round, kdr_round = _eff_kdr(r_kills, r_deaths, r_sk)
+            eff_round, kdr_round = _eff_kdr(r_kills, r_combat_deaths)
+            u_eff_round = _calculate_unified_eff(r_kills, r_revives, r_dg, r_xp, r_combat_deaths, r_sk)
 
             pms_round = PlayerMatchStats(
                 match_id=match_row.id,
@@ -863,10 +949,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 round_index=round_index,
                 team=team, 
                 kills=r_kills,
-                deaths=r_deaths,
+                deaths=r_combat_deaths,
                 kdr=kdr_round,
                 eff=eff_round,
-                unified_eff=u_eff,
+                unified_eff=u_eff_round,
                 damage_given=r_dg,
                 damage_received=r_dr,
                 team_damage_given=r_tdg,
@@ -875,6 +961,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 gibs=r_gibs,
                 self_kills=r_sk,
                 team_kills=r_tk,
+                team_deaths_received=r_tk_rec,
                 team_gibs=r_tg,
                 time_played_pct=r_time_played_pct,
                 xp=r_xp,
@@ -900,8 +987,9 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             
             # Store current state for next round's delta
             if unpacked:
-                unpacked.kills = kills
-                unpacked.deaths = deaths
+                unpacked.kills = kills_raw
+                unpacked.deaths = deaths_all_raw
+                unpacked.self_kills = sk_raw
                 unpacked.revives = revives
                 unpacked.medkits = medkits
                 unpacked.ammopacks = ammo_packs
@@ -929,10 +1017,11 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ts.leaned_seconds += r_lean
             
             ts.kills += r_kills
-            ts.deaths += r_deaths
+            ts.deaths += r_combat_deaths
             ts.revives += r_revives
             ts.medkits += r_medkits
             ts.team_medpacks += r_ammo_packs
+            ts.team_deaths_received += r_tk_rec
             ts.headshot_hits += em.headshot_hits
             ts.shots_recorded += em.shots_recorded
 
@@ -942,8 +1031,29 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ts.time_played_pcts.append(tpct)
 
     # 3. RE-DETERMINE WINNER based on all rounds
-    # (Optional: implement full Stopwatch logic across all rounds in DB if needed)
-    match_row.winner_team = winner_team # Use the latest payload's winner as fallback
+    # We must map the winner_team to the "Pinned" identity.
+    # If the winner of the final round was the same physical team that was Axis in Round 1,
+    # then their pinned identity is 1. If they were Allies in Round 1, their identity is 2.
+    if len(payloads) > 0 and winner_team in (1, 2):
+        # Correct Winner Re-mapping using a majority vote
+        final_player_stats = payloads[-1].get("player_stats", {})
+        votes = {1: 0, 2: 0} # Pinned Alpha=1, Beta=2
+        
+        for g, pdata in final_player_stats.items():
+            if int(pdata.get("team") or 0) == winner_team:
+                pg = g.strip().upper()
+                pg = aliases.get(pg, pg)
+                pinned_team = first_team_by_guid.get(pg)
+                if pinned_team in (1, 2):
+                    votes[pinned_team] += 1
+
+        if votes[1] > votes[2]:
+            match_row.winner_team = 1 # Alpha
+        elif votes[2] > votes[1]:
+            match_row.winner_team = 2 # Beta
+        else:
+            # Tie-breaker or fallback to raw winner index
+            match_row.winner_team = winner_team
 
     # Insert totals
     performances: list[PlayerPerformance] = []
@@ -952,7 +1062,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         player = player_db_by_guid[guid]
         
         avg_time = sum(ts.time_played_pcts) / len(ts.time_played_pcts) if ts.time_played_pcts else 0.0
-        eff, kdr = _eff_kdr(ts.kills, ts.deaths, ts.self_kills)
+        eff, kdr = _eff_kdr(ts.kills, ts.deaths)
+        u_eff = _calculate_unified_eff(ts.kills, ts.revives, ts.damage_given, ts.xp, ts.deaths, ts.self_kills)
         hs_acc = hs_accuracy(ts.headshot_hits, ts.shots_recorded)
 
         num_rounds = len(ts.time_played_pcts) if ts.time_played_pcts else 1
@@ -966,12 +1077,13 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             deaths=ts.deaths,
             kdr=kdr,
             eff=eff,
-            unified_eff=_calculate_unified_eff(ts.kills, ts.revives, ts.damage_given, ts.xp, ts.deaths, ts.self_kills),
+            unified_eff=u_eff,
             damage_given=ts.damage_given,
             damage_received=ts.damage_received,
             team_damage_given=ts.team_damage_given,
             team_damage_received=ts.team_damage_received,
-            headshots=ts.headshots,
+            team_deaths_received=ts.team_deaths_received,
+            headshots=ts.headshot_hits,
             gibs=ts.gibs,
             self_kills=ts.self_kills,
             team_kills=ts.team_kills,
@@ -1037,7 +1149,13 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             db.add(gr)
             db.flush()
         
-        new_rating = compute_display_rating(res.new_mu, res.new_sigma)
+        # Get match count (total including this one)
+        m_count = db.query(PlayerMatchStats).filter(
+            PlayerMatchStats.player_id == res.player_id, 
+            PlayerMatchStats.round_index == 0
+        ).count() + 1
+
+        new_rating = compute_display_rating(res.new_mu, res.new_sigma, match_count=m_count)
         
         gr.mu = res.new_mu
         gr.sigma = res.new_sigma
@@ -1046,7 +1164,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             player_id=res.player_id,
             match_id=match_row.id,
             rating=new_rating,
-            delta=res.delta_rating,
+            delta=new_rating - gr.current_rating,
             mu=res.new_mu,
             sigma=res.new_sigma,
         )
@@ -1092,7 +1210,10 @@ def recalculate_all_ratings(db: Session):
     db.query(PlayerGatherRatingHistory).delete()
     db.flush()
 
-    # 3. Load all matches in chronological order
+    # 3. Initialize match counts for hybrid sigma logic
+    match_counts: dict[int, int] = defaultdict(int)
+
+    # 4. Load all matches in chronological order
     matches = db.query(Match).order_by(Match.round_start_unix.asc()).all()
 
     for m in matches:
@@ -1153,7 +1274,10 @@ def recalculate_all_ratings(db: Session):
         for res in rating_results:
             gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == res.player_id).one()
             
-            new_rating = compute_display_rating(res.new_mu, res.new_sigma)
+            # Increment match count for hybrid sigma
+            match_counts[res.player_id] += 1
+            
+            new_rating = compute_display_rating(res.new_mu, res.new_sigma, match_count=match_counts[res.player_id])
             delta = new_rating - gr.current_rating
             
             gr.mu = res.new_mu

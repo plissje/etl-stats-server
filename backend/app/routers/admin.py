@@ -6,7 +6,7 @@ from typing import List, Optional, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 from app.database import get_db
 from app.models import Match, Player, PlayerAlias, PlayerMatchStats, PlayerGatherRating, PlayerGatherRatingHistory, MatchPayload
 from app.services.ingest import ingest_match_payloads, recalculate_all_ratings, load_aliases
@@ -16,6 +16,60 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 class ReprocessRequest(BaseModel):
     match_ids: Optional[List[int]] = None
+
+@router.post("/match/{match_id}/adopt/{source_id}")
+def adopt_match_payloads(match_id: int, source_id: int, db: Session = Depends(get_db)):
+    """
+    Manually adopts all payloads from a source match into a target match.
+    Useful for merging fragmented rounds that failed automatic detection.
+    """
+    target = db.query(Match).filter(Match.id == match_id).one_or_none()
+    source = db.query(Match).filter(Match.id == source_id).one_or_none()
+    if not target or not source:
+        raise HTTPException(status_code=404, detail="Match not found")
+    
+    # Move payloads
+    source_payloads = db.query(MatchPayload).filter(MatchPayload.match_id == source.id).all()
+    for sp in source_payloads:
+        sp.match_id = target.id
+        # Ensure unique round number in target
+        existing_round = db.query(MatchPayload).filter(
+            MatchPayload.match_id == target.id,
+            MatchPayload.round_number == sp.round_number
+        ).first()
+        if existing_round and existing_round.id != sp.id:
+            # Shift to next available
+            max_r = db.query(func.max(MatchPayload.round_number)).filter(MatchPayload.match_id == target.id).scalar()
+            sp.round_number = (max_r or 0) + 1
+            
+    db.commit()
+    
+    # Delete the now-empty source match
+    db.delete(source)
+    db.commit()
+    
+    return {"status": "ok", "message": f"Match {source_id} merged into {match_id}. Please run reprocess for match {match_id}."}
+
+
+@router.post("/match/{match_id}/force-draw")
+def force_match_draw(match_id: int, db: Session = Depends(get_db)):
+    """
+    Manually forces a match to be a Draw (0).
+    Useful for matches where round payloads are missing or corrupted.
+    """
+    match_row = db.query(Match).filter(Match.id == match_id).one_or_none()
+    if not match_row:
+        raise HTTPException(status_code=404, detail="Match not found")
+    
+    match_row.winner_team = 0
+    match_row.winner_identity = 0
+    db.commit()
+    
+    # Recalculate all ratings to reflect the new match result
+    recalculate_all_ratings(db)
+    
+    return {"status": "ok", "message": f"Match {match_id} set to Draw and ratings recalculated."}
+
 
 @router.post("/reprocess")
 def reprocess_matches(req: ReprocessRequest, db: Session = Depends(get_db)):
@@ -89,10 +143,10 @@ def reprocess_matches(req: ReprocessRequest, db: Session = Depends(get_db)):
                     revives = row.revives or 0
                     medkits = (row.medkits or 0) + (row.team_medpacks or 0)
                     xp = row.xp or 0
-                    deaths = row.deaths or 0
+                    combat_deaths = row.deaths or 0 # Fallback assumes 'deaths' column is scoreboard (Dth)
                     sk = row.self_kills or 0
-                    points = kills + revives + (medkits * 0.25) + (xp * 0.10)
-                    total_actions = points + deaths + sk
+                    points = kills + (revives * 0.33) + (medkits * 0.25) + (xp * 0.10)
+                    total_actions = points + combat_deaths + (sk * 0.25)
                     row.unified_eff = round((points / total_actions) * 100.0, 1) if total_actions > 0 else 0.0
                 db.flush()
                 reprocessed_count += 1
@@ -118,7 +172,7 @@ def reprocess_matches(req: ReprocessRequest, db: Session = Depends(get_db)):
         
         if payloads:
             print(f"Reprocessing match {m.match_id} with {len(payloads)} rounds...")
-            ingest_match_payloads(db, payloads)
+            ingest_match_payloads(db, payloads, target_db_match_id=m.id)
             reprocessed_count += 1
             
     # Always recalculate ratings after reprocessing to ensure consistency
@@ -196,11 +250,13 @@ def run_db_migrations(db: Session = Depends(get_db)):
         add_col("matches", "raw_payload", "TEXT")
         add_col("player_match_stats", "unified_eff", "FLOAT DEFAULT 0.0")
         add_col("player_match_stats", "medkits", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "team_deaths_received", "INTEGER DEFAULT 0")
         
         # Performance Indexes
         add_idx("matches", "round_start_unix")
         add_idx("matches", "mapname")
         add_idx("matches", "mvp_player_id")
+        add_idx("player_match_stats", "player_id, round_index", "idx_pms_player_round")
         
         conn.commit()
         return {"status": "ok", "message": "Database schema migration and indexing complete."}
@@ -420,19 +476,23 @@ def run_consolidation(db: Session) -> dict:
                     m_stat.revives                   += a_stat.revives or 0
                     m_stat.medkits                   += a_stat.medkits or 0
                     m_stat.team_medpacks             += a_stat.team_medpacks or 0
+                    m_stat.team_deaths_received      += a_stat.team_deaths_received or 0
                     m_stat.spam_kills                += a_stat.spam_kills or 0
                     m_stat.spawn_count               += a_stat.spawn_count or 0
                     m_stat.crouched_seconds          += a_stat.crouched_seconds or 0
                     m_stat.proned_seconds            += a_stat.proned_seconds or 0
                     m_stat.leaned_seconds            += a_stat.leaned_seconds or 0
                     m_stat.distance_travelled_meters += a_stat.distance_travelled_meters or 0.0
-                    # Recalculate derived floats
+                    
+                    # Recalculate derived floats (Scoreboard Standard)
                     m_stat.kdr = round(m_stat.kills / max(1, m_stat.deaths), 2)
-                    m_stat.eff = round(100.0 * m_stat.kills / max(1, m_stat.kills + m_stat.deaths + m_stat.self_kills), 1)
+                    m_stat.eff = round(100.0 * m_stat.kills / max(1, m_stat.kills + m_stat.deaths), 1)
+                    
+                    # Unified Efficiency (Competitive Weights)
                     kills = m_stat.kills; revives = m_stat.revives; xp = m_stat.xp
-                    damage = m_stat.damage_given; deaths = m_stat.deaths; sk = m_stat.self_kills
+                    damage = m_stat.damage_given; combat_deaths = m_stat.deaths; sk = m_stat.self_kills
                     points = kills + (revives * 0.33) + (damage / 100.0) + (xp * 0.1)
-                    total_ue = points + deaths + sk
+                    total_ue = points + combat_deaths + (sk * 0.25)
                     m_stat.unified_eff = round((points / total_ue) * 100.0, 1) if total_ue > 0 else 0.0
                     db.delete(a_stat)
                 else:
@@ -513,3 +573,23 @@ def update_aliases(data: List[dict]):
     with open(mapping_path, "w") as f:
         json.dump(data, f, indent=2)
     return {"status": "ok"}
+
+
+class PlayerNameUpdate(BaseModel):
+    display_name: str
+
+
+@router.post("/players/{guid}/display-name")
+def update_player_display_name(guid: str, body: PlayerNameUpdate, db: Session = Depends(get_db)):
+    """
+    Manually overrides a player's display name. 
+    This is useful for 'locking' a clean name that won't be overwritten 
+    by subsequent tag changes during ingestion.
+    """
+    player = db.query(Player).filter(Player.guid == guid).one_or_none()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    player.display_name = body.display_name
+    db.commit()
+    return {"status": "ok", "guid": guid, "new_name": body.display_name}

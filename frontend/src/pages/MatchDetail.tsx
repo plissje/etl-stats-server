@@ -227,7 +227,7 @@ function ScoreTable({
                       title={r.name_raw || undefined}
                       style={{ textDecoration: 'none' }}
                     >
-                      <QuakeName name={r.name_raw || r.name_display} />
+                      <QuakeName name={r.name_display} />
                     </Link>
                   </td>
                   {COLS.map(col => {
@@ -356,14 +356,14 @@ export function MatchDetail() {
           <div>
             <h1 className="text-4xl font-black tracking-tight text-white mb-1">{match.mapname.toUpperCase()}</h1>
             <div className="flex items-center gap-3 text-sm flex-wrap">
-            {match.winner_team > 0 && (
-              <div className={`px-2.5 py-1 text-xs font-bold rounded uppercase ${
-                match.winner_team === 1 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
-                match.winner_team === 2 ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30' : ''
-              }`}>
-                {match.winner_team === 1 ? 'Alpha Win' : 'Beta Win'}
-              </div>
-            )}
+            <div className={`px-2.5 py-1 text-xs font-bold rounded uppercase border ${
+              match.winner_team === 1 ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
+              match.winner_team === 2 ? 'bg-sky-500/20 text-sky-400 border-sky-500/30' :
+              'bg-zinc-500/20 text-zinc-400 border-zinc-500/30'
+            }`}>
+              {match.winner_team === 1 ? 'Alpha Win' : 
+               match.winner_team === 2 ? 'Beta Win' : 'Draw Match'}
+            </div>
               {duration && <span className="text-zinc-400 font-mono bg-zinc-800/80 px-2 py-1 rounded">{duration}</span>}
               {matchDate && <span className="text-zinc-500 font-mono text-xs">{matchDate}</span>}
             </div>
@@ -386,35 +386,35 @@ export function MatchDetail() {
             <AwardCard 
               emoji="⚔️" 
               title="Top Killer" 
-              value={topFragger ? <QuakeName name={topFragger.name_raw || topFragger.name_display} /> : "N/A"} 
+              value={topFragger ? <QuakeName name={topFragger.name_display} /> : "N/A"} 
               subtext={topFragger ? `${topFragger.kills} kills` : "0 kills"} 
               empty={!topFragger || topFragger.kills === 0}
             />
             <AwardCard 
               emoji="💉" 
               title="Top Medic" 
-              value={topMedic ? <QuakeName name={topMedic.name_raw || topMedic.name_display} /> : "N/A"} 
+              value={topMedic ? <QuakeName name={topMedic.name_display} /> : "N/A"} 
               subtext={topMedic ? `${topMedic.revives} revives` : "0 revives"} 
               empty={!topMedic || topMedic.revives === 0}
             />
             <AwardCard 
               emoji="💥" 
               title="Spammer" 
-              value={topSpammer ? <QuakeName name={topSpammer.name_raw || topSpammer.name_display} /> : "N/A"} 
+              value={topSpammer ? <QuakeName name={topSpammer.name_display} /> : "N/A"} 
               subtext={topSpammer ? `${topSpammer.spam_kills} spamkills` : "0 spamkills"} 
               empty={!topSpammer || topSpammer.spam_kills === 0}
             />
             <AwardCard 
               emoji="🎧" 
               title="iPod" 
-              value={topIpod ? <QuakeName name={topIpod.name_raw || topIpod.name_display} /> : "N/A"} 
+              value={topIpod ? <QuakeName name={topIpod.name_display} /> : "N/A"} 
               subtext={topIpod ? `${topIpod.deaths} deaths (Fewest)` : "N/A"} 
               empty={!topIpod}
             />
             <AwardCard 
               emoji="🔥" 
               title="Friendly Fire" 
-              value={topTK && (topTK.team_kills || 0) > 0 ? <QuakeName name={topTK.name_raw || topTK.name_display} /> : "Clean"} 
+              value={topTK && (topTK.team_kills || 0) > 0 ? <QuakeName name={topTK.name_display} /> : "Clean"} 
               subtext={topTK ? `${topTK.team_kills || 0} Team Kills` : "0 Team Kills"} 
               empty={!topTK || (topTK.team_kills || 0) === 0}
             />

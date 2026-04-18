@@ -25,6 +25,7 @@ class EventMetrics:
     deaths: int = 0
     self_kills: int = 0  # All self-inflicted deaths: grenade splash, arty, dynamite, MOD_SUICIDE etc.
     team_kills: int = 0
+    team_deaths_received: int = 0
     team_gibs: int = 0
     headshot_hits: int = 0
     shots_recorded: int = 0
@@ -74,7 +75,7 @@ def compute_event_metrics(
                         a_team = team_by_guid.get(atk, 0)
                         if t_team and a_team and t_team == a_team:
                             # They were killed by a teammate
-                            pass 
+                            m.team_deaths_received += 1
                         else:
                             m.nemesis_deaths[atk] = m.nemesis_deaths.get(atk, 0) + 1
                             
@@ -136,6 +137,8 @@ def compute_event_metrics(
                     if _same_player(atk, tgt):
                         # Self-kill: grenade splash, arty, dynamite, falling, etc.
                         m.self_kills += 1
+                    elif label == "teamkill":
+                        m.team_deaths_received += 1
                     elif label == "kill" and atk and not _same_player(atk, tgt):
                         m.nemesis_deaths[atk] = m.nemesis_deaths.get(atk, 0) + 1
                 

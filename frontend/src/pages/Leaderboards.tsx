@@ -11,14 +11,14 @@ const RenderBoard = ({ title, data, suffix, icon }: { title: string, data: Leade
     </div>
     <ul className="divide-y divide-zinc-800/40">
       {data.map((p, i) => (
-        <li key={p.guid} className="flex justify-between px-5 py-3 transition hover:bg-zinc-800/30 group">
-          <Link to={`/player/${p.guid}`} className="flex gap-3 hover:text-white text-zinc-300 font-medium items-center">
-            <span className={`w-5 text-center font-bold text-sm ${i === 0 ? 'text-amber-400' : i === 1 ? 'text-zinc-300' : i === 2 ? 'text-amber-700' : 'text-zinc-600'}`}>{i + 1}.</span> 
-            <span className="group-hover:translate-x-1 transition duration-200">
-              <QuakeName name={p.raw_name || p.display_name} />
+        <li key={p.guid} className="flex justify-between items-center px-5 py-3 transition hover:bg-zinc-800/30 group overflow-hidden">
+          <Link to={`/player/${p.guid}`} className="flex gap-3 hover:text-white text-zinc-300 font-medium items-center min-w-0">
+            <span className={`w-5 flex-shrink-0 text-center font-bold text-sm ${i === 0 ? 'text-amber-400' : i === 1 ? 'text-zinc-300' : i === 2 ? 'text-amber-700' : 'text-zinc-600'}`}>{i + 1}.</span> 
+            <span className="group-hover:translate-x-1 transition duration-200 truncate">
+              <QuakeName name={p.display_name} />
             </span>
           </Link>
-          <span className="text-violet-400/90 font-mono text-sm font-medium">{p.val.toLocaleString()} <span className="text-zinc-600 text-xs">{suffix}</span></span>
+          <span className="text-violet-400/90 font-mono text-sm font-medium whitespace-nowrap pl-4">{p.val.toLocaleString()} <span className="text-zinc-600 text-xs">{suffix}</span></span>
         </li>
       ))}
       {data.length === 0 && <li className="p-6 text-center text-zinc-600 border-dashed">No participants yet.</li>}
@@ -55,8 +55,26 @@ export function Leaderboards() {
       <RenderBoard 
         title="Sharpshooters" 
         data={boards.sharpshooter} 
-        suffix="AVG HS" 
+        suffix="HS %" 
         icon={<svg className="w-4 h-4 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>}
+      />
+      <RenderBoard 
+        title="Top Killers" 
+        data={boards.killer} 
+        suffix="AVG KILLS" 
+        icon={<svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" /></svg>}
+      />
+      <RenderBoard 
+        title="Undertakers" 
+        data={boards.undertaker} 
+        suffix="AVG GIBS" 
+        icon={<svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>}
+      />
+      <RenderBoard 
+        title="SMG Accuracy" 
+        data={boards.accuracy_smg} 
+        suffix="SMG %" 
+        icon={<svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
       />
     </div>
   )

@@ -28,7 +28,9 @@ class PlayerListResponse(BaseModel):
     
 class PlayerMove(BaseModel):
     slot: int
-    team: str # "Axis" or "Allies"
+    team: str # Target team: "Axis" or "Allies"
+    name: Optional[str] = None
+    origin_team: Optional[str] = None # Current team before the move
 
 class BatchMoveRequest(BaseModel):
     moves: List[PlayerMove]
@@ -117,18 +119,18 @@ async def get_players(db: Session = Depends(get_db)):
         player_list.append(p_info)
         guids_to_fetch.append(master_guid)
 
-    print(f"DEBUG: Total live players pre-rating: {len(live_players)}")
+    print(f"DEBUG: Total live players pre-rating: {len(player_list)}")
 
-    if not live_players:
+    if not player_list:
         return PlayerListResponse(players=[], count=0)
         
     # 4. Join with database ratings and roles precisely using GUID
-    found_guids = [p['guid'].upper() for p in live_players]
+    found_guids = guids_to_fetch
     ratings_map, roles_map = get_player_ratings_and_roles(db, found_guids)
 
     # 5. Format output
     final_players = []
-    for p in live_players:
+    for p in player_list:
         team_map = {1: "Axis", 2: "Allies", 3: "Spectator"}
         team_str = team_map.get(p['team'], "Active")
         guid = p['guid'].upper()
@@ -149,23 +151,71 @@ async def get_players(db: Session = Depends(get_db)):
 
 @router.post("/move-players", response_model=MoveResponse)
 async def move_players(req: BatchMoveRequest):
+    commands_sent = 0
     if not req.moves:
         return MoveResponse(success=True, commands_sent=0, details="No moves requested")
     
     tasks = []
-    for move in req.moves:
-        # User feedback: putteam doesn't work, use ref putaxis/putallies
-        sub_cmd = "putaxis" if move.team == "Axis" else "putallies"
-        cmd = f"ref {sub_cmd} {move.slot}"
-        tasks.append(send_rcon_command(cmd))
     
-    try:
-        # Execute all moves in parallel
-        await asyncio.gather(*tasks)
-        return MoveResponse(
-            success=True, 
-            commands_sent=len(req.moves), 
-            details=f"Successfully issued {len(req.moves)} movement commands."
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RCON move failed: {str(e)}")
+    # Filter to only players who ACTUALLY need to move
+    delta_moves = [m for m in req.moves if m.origin_team != m.team]
+    
+    if not delta_moves:
+        # Still need to announce who is on which team even if nobody moved
+        axis_names = [m.name for m in req.moves if m.team == "Axis" and m.name]
+        allies_names = [m.name for m in req.moves if m.team == "Allies" and m.name]
+    else:
+        to_axis = [m for m in delta_moves if m.team == "Axis"]
+        to_allies = [m for m in delta_moves if m.team == "Allies"]
+        
+        # Interleave moves to maintain headcount balance during transition
+        interleaved_delta = []
+        for i in range(max(len(to_axis), len(to_allies))):
+            if i < len(to_axis): interleaved_delta.append(to_axis[i])
+            if i < len(to_allies): interleaved_delta.append(to_allies[i])
+            
+        for move in interleaved_delta:
+            sub_cmd = "putaxis" if move.team == "Axis" else "putallies"
+            cmd = f"ref {sub_cmd} {move.slot}"
+            try:
+                # 150ms delay between every move to let the engine breathe and update headcount
+                await send_rcon_command(cmd, timeout=0.8)
+                await asyncio.sleep(0.15)
+                commands_sent += 1
+            except Exception:
+                pass
+
+        # Prep names for announcement (use all requested players, not just moved ones)
+        axis_names = [m.name for m in req.moves if m.team == "Axis" and m.name]
+        allies_names = [m.name for m in req.moves if m.team == "Allies" and m.name]
+
+    # Announcements
+    def chunked_names(names, n=4):
+        return [names[i:i + n] for i in range(0, len(names), n)]
+                
+    if axis_names:
+        for chunk in chunked_names(axis_names):
+            try:
+                msg = f'qsay ^1AXIS^7: {", ".join(chunk)}'
+                await send_rcon_command(msg, timeout=0.8)
+                await asyncio.sleep(0.15)
+                commands_sent += 1
+            except Exception:
+                pass
+            
+    if allies_names:
+        for chunk in chunked_names(allies_names):
+            try:
+                msg = f'qsay ^4ALLIES^7: {", ".join(chunk)}'
+                await send_rcon_command(msg, timeout=0.8)
+                await asyncio.sleep(0.15)
+                commands_sent += 1
+            except Exception:
+                pass
+    
+    return MoveResponse(
+        success=True, 
+        commands_sent=commands_sent, 
+        details=f"Issued {commands_sent} RCON commands ({len(delta_moves)} players moved) with 150ms spacing."
+    )
+

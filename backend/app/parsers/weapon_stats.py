@@ -4,6 +4,7 @@ from typing import Any
 from app.parsers.weapon_classes import WS_SLOT_NAMES, slot_to_support_item
 
 TAIL_LEN = 10
+WS_SYRINGE_SLOT = 27
 
 
 def _to_int(x: Any) -> int:

@@ -9,6 +9,8 @@ import { MatchDetail } from './pages/MatchDetail'
 import { PlayerProfile } from './pages/PlayerProfile'
 import { HowItWorks } from './pages/HowItWorks'
 
+import { version } from '../package.json'
+
 function RouteLink({ to, label }: { to: string, label: string }) {
   const loc = useLocation()
   const isActive = loc.pathname === to
@@ -38,7 +40,7 @@ function Layout({ children }: { children: ReactNode }) {
               </div>
               <div className="flex flex-col -gap-1">
                 <span className="text-lg font-black tracking-tighter text-white group-hover:text-indigo-400 transition-colors">STATS</span>
-                <span className="text-[10px] font-bold text-indigo-400/80 tracking-[0.2em] -mt-1 opacity-80">v2026.4.6.3</span>
+                <span className="ml-2 px-1.5 py-0.5 rounded-md bg-zinc-800 text-[10px] font-mono text-zinc-500 border border-zinc-700/50 leading-none">v{version}</span>
               </div>
             </Link>
           </div>

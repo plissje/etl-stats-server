@@ -113,7 +113,7 @@ export function PlayerProfile() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-4">
             <h1 className="text-6xl font-black tracking-tighter text-white">
-              <QuakeName name={p.raw_name || p.display_name} />
+              <QuakeName name={p.display_name} />
             </h1>
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <div className="flex items-center gap-2 font-mono text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-full border border-white/5">

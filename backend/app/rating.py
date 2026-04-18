@@ -22,13 +22,17 @@ class RatingResult:
     new_sigma: float
     delta_rating: float  # Displayed delta, computed against (mu - 2*sigma)
 
-def compute_display_rating(mu: float, sigma: float) -> float:
-    # Default openskill mu=25, sigma=8.333
-    # mu - 2*sigma = 25 - 16.666... = 8.333...
-    # To start at exactly 1500, we subtract this default conservative rating (8.333...)
-    # so that (25 - 16.666 - 8.333) * 100 + 1500 = 1500.
-    conservative_rating = mu - (2.0 * sigma)
-    default_conservative = 25.0 - (2.0 * 8.333333333333334)
+def compute_display_rating(mu: float, sigma: float, match_count: int = 0) -> float:
+    # Hybrid Sigma multiplier: 2.0 (jumpy) for matches 1-10, sliding to 3.0 (settled) by match 20.
+    # Formula: 2.0 + (1.0 * min(max(0, match_count - 10), 10) / 10.0)
+    k = 2.0 + (1.0 * min(max(0, match_count - 10), 10) / 10.0)
+    
+    # Starting baseline for this k (for mu=25, sigma=8.33)
+    # This ensures a brand new player (match_count=0, k=2.0) starts at exactly 1500.
+    # It also means that as k increases, we are comparing against the same starting skill baseline.
+    default_conservative = 25.0 - (k * 8.333333333333334)
+    
+    conservative_rating = mu - (k * sigma)
     return max(100.0, 1500.0 + (conservative_rating - default_conservative) * 100.0)
 
 def calculate_openskill_ratings(
@@ -102,14 +106,14 @@ def calculate_openskill_ratings(
             ratio = player_score / max(1.0, team_avg_score)
             
             # Symmetric Boost logic: (Ratio - 1.0) * Sensitivity
-            # Sensitivity 3.0 aggressively separates carries from carried.
-            individual_performance_boost = (ratio - 1.0) * 3.0
+            # Sensitivity 1.5 allows for clear skill separation while keeping growth gradual.
+            individual_performance_boost = (ratio - 1.0) * 1.5
             
-            # 80/20 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
-            total_mu_change = (mu_delta_team * 0.2) + (individual_performance_boost * 0.8)
+            # 70/30 SPLIT BETWEEN INDIVIDUAL PERFORMANCE AND TEAM RESULT
+            total_mu_change = (mu_delta_team * 0.3) + (individual_performance_boost * 0.7)
             
-            # HARD BOUNDS: Prevent rating explosion (capped at +/- 2.5 mu per game)
-            total_mu_change = max(-2.5, min(2.5, total_mu_change))
+            # HARD BOUNDS: Prevent rating explosion (capped at +/- 1.0 mu per game)
+            total_mu_change = max(-1.0, min(1.0, total_mu_change))
 
             sigma_delta = new_r.sigma - old_r.sigma
             final_mu = old_r.mu + total_mu_change

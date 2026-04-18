@@ -14,6 +14,9 @@ services:
       - RCON_HOST=${RCON_HOST}
       - RCON_PORT=${RCON_PORT}
       - RCON_PASSWORD=${RCON_PASSWORD}
+      - BALANCER_DAMPENING_THRESHOLD=${BALANCER_DAMPENING_THRESHOLD:-3000}
+      - BALANCER_DAMPENING_FACTOR=${BALANCER_DAMPENING_FACTOR:-0.5}
+      - BALANCER_NOISE=${BALANCER_NOISE:-150}
     # Port 8000 is now only accessible via 'proxynet' (e.g., from NPM or the frontend)
     # ports:
     #   - "8000:8000"

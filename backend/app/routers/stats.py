@@ -133,3 +133,10 @@ def stats_overview(db: Session = Depends(get_db)) -> dict:
         "total_time_played_s": total_time_played_s,
         "matches_by_day": matches_by_day,
     }
+
+
+@router.get("/stats/maps", response_model=list[str])
+def get_unique_maps(db: Session = Depends(get_db)) -> list[str]:
+    """Returns a sorted list of all unique map names found in the database."""
+    maps = db.query(Match.mapname).distinct().order_by(Match.mapname).all()
+    return [m[0] for m in maps if m[0]]

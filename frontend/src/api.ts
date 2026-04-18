@@ -82,14 +82,30 @@ export type MatchDetail = {
   rivalry: MatchRivalry | null
 }
 
-export async function fetchMatches(mapname?: string, skip: number = 0, limit: number = 20): Promise<MatchSummary[]> {
+export async function fetchMatches(
+  mapname?: string, 
+  skip: number = 0, 
+  limit: number = 20,
+  playerName?: string,
+  fromDate?: number,
+  toDate?: number
+): Promise<MatchSummary[]> {
   const params = new URLSearchParams()
   params.set('skip', skip.toString())
   params.set('limit', limit.toString())
   if (mapname) params.set('mapname', mapname)
+  if (playerName) params.set('player_name', playerName)
+  if (fromDate) params.set('from_date', fromDate.toString())
+  if (toDate) params.set('to_date', toDate.toString())
   
   const r = await fetch(`/api/matches?${params.toString()}`)
   if (!r.ok) throw new Error('failed to load matches')
+  return r.json()
+}
+
+export async function fetchMaps(): Promise<string[]> {
+  const r = await fetch('/api/stats/maps')
+  if (!r.ok) throw new Error('failed to load maps')
   return r.json()
 }
 
@@ -164,15 +180,19 @@ export async function fetchStatsOverview(): Promise<StatsOverview> {
   return r.json()
 }
 
-export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number }
+export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number; main_role?: string }
+export type PlayerSearchResults = { players: LeaderboardEntry[]; total: number }
 export type PlayerIdentifier = { guid: string; name: string; slot?: number }
 export type Leaderboards = {
   openskill: LeaderboardEntry[]
   medic: LeaderboardEntry[]
   sharpshooter: LeaderboardEntry[]
+  killer: LeaderboardEntry[]
+  undertaker: LeaderboardEntry[]
+  accuracy_smg: LeaderboardEntry[]
 }
 
-export type BalancePlayer = { guid: string; name: string; rating: number; slot?: number; role: string }
+export type BalancePlayer = { guid: string; name: string; rating: number; slot?: number; role: string; origin_team?: string }
 export type BalanceResponse = {
   alpha: BalancePlayer[]
   beta: BalancePlayer[]
@@ -189,21 +209,26 @@ export async function fetchLeaderboards(): Promise<Leaderboards> {
   return r.json()
 }
 
-export async function searchPlayers(q: string = ''): Promise<LeaderboardEntry[]> {
-  const r = await fetch(`/api/players?q=${encodeURIComponent(q)}`)
+export async function searchPlayers(q: string = '', skip: number = 0, limit: number = 50): Promise<PlayerSearchResults> {
+  const r = await fetch(`/api/players?q=${encodeURIComponent(q)}&skip=${skip}&limit=${limit}`)
   if (!r.ok) throw new Error('failed to search players')
   return r.json()
 }
 
-export async function balanceTeams(players: PlayerIdentifier[]): Promise<BalanceResponse> {
+export async function balanceTeams(players: PlayerIdentifier[], variations: boolean = false): Promise<BalanceResponse> {
   const response = await fetch('/api/balancer/balance', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ players })
+    body: JSON.stringify({ players, variations })
   })
+  
   if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || 'Failed to balance teams')
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to balance teams')
+    }
+    throw new Error(`Server Error (${response.status}): ${response.statusText}`)
   }
   return response.json()
 }
@@ -215,15 +240,20 @@ export async function fetchLivePlayers(): Promise<LivePlayer[]> {
   return data.players
 }
 
-export async function movePlayersToTeams(moves: { slot: number, team: string }[]): Promise<{ success: boolean, details: string }> {
+export async function movePlayersToTeams(moves: { slot: number, team: string, name?: string, origin_team?: string }[]): Promise<{ success: boolean, details: string }> {
   const response = await fetch('/api/server/move-players', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ moves })
   })
+  
   if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || 'Failed to move players')
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Failed to move players')
+    }
+    throw new Error(`Server Error (${response.status}): ${response.statusText}`)
   }
   return response.json()
 }

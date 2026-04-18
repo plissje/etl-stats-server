@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session, defer
 from sqlalchemy import func
 
 from app.database import get_db
-from app.models import Player, PlayerGatherRating, PlayerGatherRatingHistory, PlayerMatchStats
-from app.schemas import PlayerProfileOut
+from app.models import Player, PlayerAlias, PlayerGatherRating, PlayerGatherRatingHistory, PlayerMatchStats
+from app.schemas import PlayerProfileOut, PlayerSearchResultsOut, PlayerSearchEntryOut
 from app.utils import record_slow_query
 
 router = APIRouter(prefix="/api/players", tags=["players"])
@@ -116,22 +116,50 @@ def _aggregate_weapons(stats_rows: list[PlayerMatchStats]) -> list[dict[str, Any
     return out[:15] # Return top 15 groups
 
 
-@router.get("")
+@router.get("", response_model=PlayerSearchResultsOut)
 def search_players(q: str = "", skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
     from sqlalchemy import desc
-    # The DB is kept clean by the startup alias consolidation — simple query is sufficient.
-    query = db.query(Player.guid, Player.display_name, Player.raw_name_last, PlayerGatherRating.current_rating) \
-              .join(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
+    from app.services.player_stats import get_player_ratings_and_roles
+    
+    # Base query for players
+    query = db.query(Player).join(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
     if q:
         query = query.filter(Player.display_name.ilike(f"%{q}%"))
-    rows = query.order_by(desc(PlayerGatherRating.current_rating)).offset(skip).limit(limit).all()
-    return [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.current_rating, 1)} for r in rows]
+    
+    # Get total count before pagination
+    total_count = query.count()
+    
+    # Get the page of results
+    players = query.order_by(desc(PlayerGatherRating.current_rating)).offset(skip).limit(limit).all()
+    
+    if not players:
+        return PlayerSearchResultsOut(players=[], total=total_count)
+    
+    # Fetch roles for this specific set of players
+    guids = [p.guid for p in players]
+    _, roles_map = get_player_ratings_and_roles(db, guids)
+    
+    out_players = []
+    for p in players:
+        out_players.append(PlayerSearchEntryOut(
+            guid=p.guid,
+            display_name=p.display_name,
+            raw_name=p.raw_name_last,
+            val=round(p.gather_rating.current_rating, 1) if p.gather_rating else 1500.0,
+            main_role=roles_map.get(p.guid.upper(), "Unknown")
+        ))
+        
+    return PlayerSearchResultsOut(players=out_players, total=total_count)
 
 
 @router.get("/leaderboards")
 def leaderboards(db: Session = Depends(get_db)):
+    from sqlalchemy import text
+    
+    start_time = time.time()
+    
     openskill_top = (
-        db.query(Player, PlayerGatherRating)
+        db.query(Player.guid, Player.display_name, Player.raw_name_last, PlayerGatherRating.current_rating)
         .join(PlayerGatherRating, Player.id == PlayerGatherRating.player_id)
         .order_by(PlayerGatherRating.current_rating.desc())
         .limit(10)
@@ -139,29 +167,82 @@ def leaderboards(db: Session = Depends(get_db)):
     )
     
     medic_stats = (
-        db.query(Player, func.avg(PlayerMatchStats.revives))
+        db.query(Player.guid, Player.display_name, Player.raw_name_last, func.avg(PlayerMatchStats.revives).label("val"))
         .join(PlayerMatchStats, Player.id == PlayerMatchStats.player_id)
+        .filter(PlayerMatchStats.round_index == 0)
         .group_by(Player.id)
         .having(func.count(PlayerMatchStats.id) >= 3)
         .order_by(func.avg(PlayerMatchStats.revives).desc())
         .limit(10)
         .all()
     )
-    
-    ss_stats = (
-        db.query(Player, func.avg(PlayerMatchStats.hs_accuracy_event))
+
+    killer_stats = (
+        db.query(Player.guid, Player.display_name, Player.raw_name_last, func.avg(PlayerMatchStats.kills).label("val"))
         .join(PlayerMatchStats, Player.id == PlayerMatchStats.player_id)
+        .filter(PlayerMatchStats.round_index == 0)
         .group_by(Player.id)
         .having(func.count(PlayerMatchStats.id) >= 3)
-        .order_by(func.avg(PlayerMatchStats.hs_accuracy_event).desc())
+        .order_by(func.avg(PlayerMatchStats.kills).desc())
         .limit(10)
         .all()
     )
 
+    undertaker_stats = (
+        db.query(Player.guid, Player.display_name, Player.raw_name_last, func.avg(PlayerMatchStats.gibs).label("val"))
+        .join(PlayerMatchStats, Player.id == PlayerMatchStats.player_id)
+        .filter(PlayerMatchStats.round_index == 0)
+        .group_by(Player.id)
+        .having(func.count(PlayerMatchStats.id) >= 3)
+        .order_by(func.avg(PlayerMatchStats.gibs).desc())
+        .limit(10)
+        .all()
+    )
+    
+    # True Mathematical Accuracy (SUM(Headshots) / SUM(Shots))
+    ss_query_text = """
+        SELECT 
+            p.guid, p.display_name, p.raw_name_last, 
+            (SUM(CAST(json_extract(weap.value, '$.headshots') AS FLOAT)) / SUM(CAST(json_extract(weap.value, '$.shots') AS FLOAT))) * 100.0 as val
+        FROM player_match_stats pms
+        JOIN players p ON p.id = pms.player_id, 
+             json_each(pms.weapon_breakdown_json) weap
+        WHERE pms.round_index = 0 AND pms.weapon_breakdown_json IS NOT NULL
+        GROUP BY pms.player_id
+        HAVING SUM(CAST(json_extract(weap.value, '$.shots') AS INTEGER)) >= 500
+        ORDER BY val DESC
+        LIMIT 10
+    """
+    ss_stats = db.execute(text(ss_query_text)).fetchall()
+
+    # SMG Accuracy (slot 4,5,6,26)
+    smg_query_text = """
+        SELECT 
+            p.guid, p.display_name, p.raw_name_last, 
+            (SUM(CAST(json_extract(weap.value, '$.hits') AS FLOAT)) / SUM(CAST(json_extract(weap.value, '$.shots') AS FLOAT))) * 100.0 as val
+        FROM player_match_stats pms
+        JOIN players p ON p.id = pms.player_id, 
+             json_each(pms.weapon_breakdown_json) weap
+        WHERE pms.round_index = 0 
+          AND pms.weapon_breakdown_json IS NOT NULL
+          AND CAST(json_extract(weap.value, '$.slot') AS INTEGER) IN (4, 5, 6, 26)
+        GROUP BY pms.player_id
+        HAVING SUM(CAST(json_extract(weap.value, '$.shots') AS INTEGER)) >= 500
+        ORDER BY val DESC
+        LIMIT 10
+    """
+    smg_stats = db.execute(text(smg_query_text)).fetchall()
+
+    duration = time.time() - start_time
+    record_slow_query("leaderboards", duration, "fetch")
+
     return {
-        "openskill": [{"guid": pl.guid, "display_name": pl.display_name, "raw_name": pl.raw_name_last, "val": round(gr.current_rating, 1)} for pl, gr in openskill_top],
-        "medic": [{"guid": pl.guid, "display_name": pl.display_name, "raw_name": pl.raw_name_last, "val": revives or 0} for pl, revives in medic_stats],
-        "sharpshooter": [{"guid": pl.guid, "display_name": pl.display_name, "raw_name": pl.raw_name_last, "val": round(avg_hs or 0, 1)} for pl, avg_hs in ss_stats],
+        "openskill": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.current_rating, 1)} for r in openskill_top],
+        "medic": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.val or 0, 1)} for r in medic_stats],
+        "sharpshooter": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.val or 0, 1)} for r in ss_stats],
+        "killer": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.val or 0, 1)} for r in killer_stats],
+        "undertaker": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.val or 0, 1)} for r in undertaker_stats],
+        "accuracy_smg": [{"guid": r.guid, "display_name": r.display_name, "raw_name": r.raw_name_last, "val": round(r.val or 0, 1)} for r in smg_stats],
     }
 
 
@@ -201,18 +282,62 @@ def player_profile(
         for h in hist
     ]
 
-    pms_list = db.query(PlayerMatchStats).filter(PlayerMatchStats.player_id == pl.id).all()
+    # 1. SQL-Level Aggregation for Lifetime Stats
+    lifetime_row = db.query(
+        func.sum(PlayerMatchStats.kills).label("kills"),
+        func.sum(PlayerMatchStats.deaths).label("deaths"),
+        func.sum(PlayerMatchStats.damage_given).label("damage_given"),
+        func.sum(PlayerMatchStats.damage_received).label("damage_received"),
+        func.sum(PlayerMatchStats.headshots).label("headshots"),
+        func.sum(PlayerMatchStats.gibs).label("gibs"),
+        func.sum(PlayerMatchStats.self_kills).label("self_kills"),
+        func.sum(PlayerMatchStats.team_kills).label("team_kills"),
+        func.sum(PlayerMatchStats.revives).label("revives"),
+        func.avg(PlayerMatchStats.eff).label("avg_eff"),
+        func.count(PlayerMatchStats.id).label("match_count")
+    ).filter(
+        PlayerMatchStats.player_id == pl.id, 
+        PlayerMatchStats.round_index == 0
+    ).first()
+
+    total_matches = lifetime_row.match_count if lifetime_row and lifetime_row.match_count else 0
+
+    lifetime = {
+        "kills": lifetime_row.kills or 0,
+        "deaths": lifetime_row.deaths or 0,
+        "damage_given": lifetime_row.damage_given or 0,
+        "damage_received": lifetime_row.damage_received or 0,
+        "headshots": lifetime_row.headshots or 0,
+        "gibs": lifetime_row.gibs or 0,
+        "self_kills": lifetime_row.self_kills or 0,
+        "team_kills": lifetime_row.team_kills or 0,
+        "revives": lifetime_row.revives or 0,
+        "avg_eff": round(lifetime_row.avg_eff or 0.0, 1) if lifetime_row.avg_eff is not None else 0.0
+    }
     
-    # Only aggregate weapon stats from the "Total Match" rows (round_index == 0)
-    summary_pms_list = [pms for pms in pms_list if pms.round_index == 0]
+    # 2. Selective JSON loading for weapons, nemesis, and classes
+    # We only load the JSON columns, avoiding the rest of the massive ORM object
+    json_rows = db.query(
+        PlayerMatchStats.weapon_breakdown_json,
+        PlayerMatchStats.nemesis_json,
+        PlayerMatchStats.classes_played_json,
+        PlayerMatchStats.round_index
+    ).filter(PlayerMatchStats.player_id == pl.id).all()
+    
+    # We still need a duck-typed object for _aggregate_weapons to consume
+    class MockPMS:
+        def __init__(self, wjson):
+            self.weapon_breakdown_json = wjson
+
+    summary_pms_list = [MockPMS(r.weapon_breakdown_json) for r in json_rows if r.round_index == 0 and r.weapon_breakdown_json]
     top_weapons = _aggregate_weapons(summary_pms_list)
 
     nemesis_counts = {}
     killed_by_counts = {}
-    for pms in pms_list:
-        if pms.nemesis_json:
+    for r in json_rows:
+        if r.nemesis_json:
             try:
-                nj = json.loads(pms.nemesis_json)
+                nj = json.loads(r.nemesis_json)
                 for k, v in nj.get("kills", {}).items():
                     nemesis_counts[k] = nemesis_counts.get(k, 0) + v
                 for k, v in nj.get("deaths", {}).items():
@@ -232,17 +357,14 @@ def player_profile(
         for row in nemesis_out["killed_by_most"]:
             row["name"] = name_map.get(row["guid"], row["guid"][:8])
 
-    # Calculate lifetime stats (totals)
-    tr_list = [pms for pms in pms_list if pms.round_index == 0]
-    
     class_stats = {
         "soldier": 0, "medic": 0, "engineer": 0, "fieldop": 0, "covertops": 0
     }
     
-    for tr in tr_list:
-        if tr.classes_played_json:
+    for r in json_rows:
+        if r.round_index == 0 and r.classes_played_json:
             try:
-                classes = json.loads(tr.classes_played_json)
+                classes = json.loads(r.classes_played_json)
                 unique_match_classes = {c["toClass"] for c in classes if "toClass" in c}
                 for cname in unique_match_classes:
                     cname_lower = cname.lower()
@@ -250,32 +372,40 @@ def player_profile(
                         class_stats[cname_lower] += 1
             except: pass
 
-    lifetime = {
-        "kills": sum(tr.kills for tr in tr_list),
-        "deaths": sum(tr.deaths for tr in tr_list),
-        "damage_given": sum(tr.damage_given for tr in tr_list),
-        "damage_received": sum(tr.damage_received for tr in tr_list),
-        "headshots": sum(tr.headshots for tr in tr_list),
-        "gibs": sum(tr.gibs for tr in tr_list),
-        "self_kills": sum(tr.self_kills for tr in tr_list),
-        "team_kills": sum(tr.team_kills for tr in tr_list),
-        "revives": sum(tr.revives for tr in tr_list),
-        "avg_eff": round(sum(tr.eff for tr in tr_list) / len(tr_list), 1) if tr_list else 0
-    }
-
-    # Get aliases
-    from app.models import PlayerAlias
-    alias_rows = db.query(PlayerAlias).filter(PlayerAlias.player_id == pl.id).all()
-    aliases = list({a.alias for a in alias_rows})
-
-    # Get total matches for pagination
-    total_matches = db.query(func.count(PlayerMatchStats.id)).filter(PlayerMatchStats.player_id == pl.id, PlayerMatchStats.round_index == 0).scalar() or 0
+    # Get aliases and normalize them
+    from app.parsers.names import strip_quake_colors, normalize_nick
     
-    # Optimized history query: join with Match but DEFER the heavy raw_payload
+    # Sort by ID or last_seen to get the most recent aliases logically
+    alias_rows = (
+        db.query(PlayerAlias.alias)
+        .filter(PlayerAlias.player_id == pl.id)
+        .order_by(PlayerAlias.last_seen.desc())
+        .limit(100)
+        .all()
+    )
+    
+    unique_aliases = []
+    seen = set()
+    for row in alias_rows:
+        # Group by normalized identity
+        normal = normalize_nick(row.alias)
+        lower_norm = normal.lower()
+        if lower_norm not in seen and len(lower_norm) > 1:
+            seen.add(lower_norm)
+            # We show the original alias string for this identity (it's the most recent one due to the sort order)
+            unique_aliases.append(row.alias)
+            if len(unique_aliases) >= 10:
+                break
+                
+    aliases = unique_aliases
+
+    # Optimized history query: join with Match and only select required columns
     recent_pms = (
-        db.query(PlayerMatchStats, Match)
+        db.query(
+            PlayerMatchStats.team, PlayerMatchStats.kills, PlayerMatchStats.deaths, PlayerMatchStats.xp,
+            Match.id, Match.mapname, Match.winner_team, Match.round_start_unix
+        )
         .join(Match, Match.id == PlayerMatchStats.match_id)
-        .options(defer(Match.raw_payload))
         .filter(PlayerMatchStats.player_id == pl.id, PlayerMatchStats.round_index == 0)
         .order_by(Match.round_start_unix.desc())
         .offset(skip)
@@ -284,16 +414,16 @@ def player_profile(
     )
     
     match_history = []
-    for pms, m in recent_pms:
+    for r in recent_pms:
         match_history.append({
-            "id": m.id,
-            "mapname": m.mapname,
-            "team": pms.team,
-            "winner_team": m.winner_team,
-            "kills": pms.kills,
-            "deaths": pms.deaths,
-            "xp": pms.xp,
-            "timestamp": m.round_start_unix,
+            "id": r.id,
+            "mapname": r.mapname,
+            "team": r.team,
+            "winner_team": r.winner_team,
+            "kills": r.kills,
+            "deaths": r.deaths,
+            "xp": r.xp,
+            "timestamp": r.round_start_unix,
         })
 
     duration = time.time() - start_time

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { 
   BarChart, 
   Bar, 
@@ -14,16 +15,17 @@ interface MatchHistoryChartProps {
 }
 
 export function MatchHistoryChart({ data }: MatchHistoryChartProps) {
-  // Format dates for display
-  const chartData = data.map(d => ({
-    ...d,
-    displayDay: new Date(d.day).toLocaleDateString([], { month: 'short', day: 'numeric' })
-  }));
+  // Memoize date formatting to prevent identity changes on every render
+  const chartData = useMemo(() => 
+    data.map(d => ({
+      ...d,
+      displayDay: new Date(d.day).toLocaleDateString([], { month: 'short', day: 'numeric' })
+    })), [data]);
 
-  // Ensure there's a minimum height even if the parent fails to provide one
+  // Provide a stable minimum height and debounce window resizing to prevent infinite ResizeObserver loops
   return (
-    <div className="w-full h-[250px] mt-4">
-      <ResponsiveContainer width="100%" height="100%">
+    <div className="w-full h-[250px] min-h-[250px] mt-4 relative">
+      <ResponsiveContainer width="100%" height="100%" debounce={100}>
         <BarChart 
           data={chartData} 
           margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
@@ -69,7 +71,7 @@ export function MatchHistoryChart({ data }: MatchHistoryChartProps) {
           >
             {chartData.map((entry, index) => (
               <Cell 
-                key={`cell-${index}`} 
+                key={`cell-${entry.day}-${index}`} 
                 fill={entry.count > 0 ? '#8b5cf6' : '#27272a'} 
                 fillOpacity={entry.count > 0 ? 0.8 : 0.2}
               />

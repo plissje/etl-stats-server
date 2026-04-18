@@ -98,6 +98,7 @@ class PlayerMatchStats(Base):
     gibs: Mapped[int] = mapped_column(Integer, default=0)
     self_kills: Mapped[int] = mapped_column(Integer, default=0)
     team_kills: Mapped[int] = mapped_column(Integer, default=0)
+    team_deaths_received: Mapped[int] = mapped_column(Integer, default=0)
     team_gibs: Mapped[int] = mapped_column(Integer, default=0)
     time_played_pct: Mapped[float] = mapped_column(Float, default=0.0)
     xp: Mapped[int] = mapped_column(Integer, default=0)

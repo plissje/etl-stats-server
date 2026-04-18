@@ -96,3 +96,16 @@ class PlayerProfileOut(BaseModel):
     match_history: list[dict[str, Any]] = []
     lifetime_stats: dict[str, Any] | None = None
     class_stats: dict[str, int] = {}
+
+
+class PlayerSearchEntryOut(BaseModel):
+    guid: str
+    display_name: str
+    raw_name: str | None = None
+    val: float
+    main_role: str = "Unknown"
+
+
+class PlayerSearchResultsOut(BaseModel):
+    players: list[PlayerSearchEntryOut]
+    total: int

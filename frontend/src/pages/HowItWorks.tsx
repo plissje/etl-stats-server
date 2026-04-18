@@ -35,8 +35,8 @@ export function HowItWorks() {
             <div className="flex items-start gap-3 bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/50">
               <Zap className="text-amber-400 shrink-0 mt-1" size={18} />
               <div>
-                <p className="text-sm font-semibold text-zinc-200 uppercase tracking-wider mb-1">The 60/40 Blend</p>
-                <p className="text-zinc-400 text-sm">Your SR change after a match is a weighted blend: 60% is based on your <span className="text-fuchsia-400">Personal Performance</span>, and 40% is based on the <span className="text-violet-400">Match Outcome</span> (Winning/Losing).</p>
+                <p className="text-sm font-semibold text-zinc-200 uppercase tracking-wider mb-1">The 70/30 Blend</p>
+                <p className="text-zinc-400 text-sm">Your SR change after a match is a weighted blend: 70% is based on your <span className="text-fuchsia-400">Personal Performance</span>, and 30% is based on the <span className="text-violet-400">Match Outcome</span> (Winning/Losing).</p>
               </div>
             </div>
           </div>
@@ -117,17 +117,17 @@ export function HowItWorks() {
             </p>
           </div>
           <div className="bg-zinc-900/40 border border-fuchsia-500/20 p-8 rounded-2xl">
-            <h3 className="text-xl font-bold text-white mb-4">The 80/20 Competitive Rule</h3>
+            <h3 className="text-xl font-bold text-white mb-4">The 70/30 Competitive Rule</h3>
             <p className="text-zinc-400 leading-relaxed mb-6">
               In scramble-based gathers, "Team Win" can sometimes be lucky. To fix this, we split each match:
-              <strong className="text-fuchsia-400"> 80%</strong> individual performance vs team avg, and 
-              <strong className="text-fuchsia-400"> 20%</strong> overall team result.
+              <strong className="text-fuchsia-400"> 70%</strong> individual performance vs team avg, and 
+              <strong className="text-fuchsia-400"> 30%</strong> overall team result.
             </p>
             <div className="p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl">
-              <p className="text-xs text-fuchsia-200 uppercase tracking-widest font-bold mb-1">Carry Shield Activated</p>
+              <p className="text-xs text-fuchsia-200 uppercase tracking-widest font-bold mb-1">Sliding Confidence Scale</p>
               <p className="text-sm text-fuchsia-100/80">
-                A <span className="font-bold text-white italic">3.0x Sensitivity</span> multiplier is applied to your individual contribution. 
-                If you are carrying your team, your SR will rise even on a loss.
+                A <span className="font-bold text-white italic">1.5x Sensitivity</span> multiplier is applied to your impact. 
+                We use <span className="text-white italic">2.0σ</span> for your first 10 games to find your rank fast, then slide to <span className="text-white italic">3.0σ</span> for maximum stability as a veteran.
               </p>
             </div>
           </div>
@@ -143,7 +143,7 @@ export function HowItWorks() {
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />
-              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">20% Team Result</span>. It is still better to win the game, but your personal impact is the primary driver of your rank.</p>
+              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">30% Team Result</span>. It is still better to win the game, but your personal impact is the primary driver of your rank.</p>
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />
