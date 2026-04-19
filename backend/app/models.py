@@ -16,6 +16,8 @@ class Match(Base):
     round_start_unix: Mapped[int] = mapped_column(Integer, default=0, index=True)
     round_end_unix: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    round1_duration: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    round2_duration: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     mvp_player_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("players.id"), nullable=True, index=True)

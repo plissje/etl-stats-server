@@ -18,7 +18,12 @@ from app.parsers.events import compute_event_metrics, hs_accuracy, nemesis_to_js
 from app.parsers.names import strip_quake_colors, normalize_nick
 from app.parsers.weapon_stats import UnpackedWeaponStats, revives_from_unpacked, unpack_weapon_stats
 from app.parsers.weapon_classes import ClassTimelineTracker
-from app.rating import PlayerPerformance, calculate_openskill_ratings, compute_display_rating
+from app.rating import (
+    PlayerPerformance,
+    calculate_openskill_ratings,
+    compute_display_rating,
+    get_performance_score,
+)
 
 
 def _weapon_breakdown_json(u: UnpackedWeaponStats | None) -> str | None:
@@ -130,6 +135,48 @@ def load_aliases() -> dict[str, str]:
     except Exception as e:
         print(f"Warning: Failed to load aliases.json: {e}")
         return {}
+
+
+def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int | None]:
+    """
+    Determines the match winner from a list of round payloads.
+    Returns (winner_team, round1_duration, round2_duration).
+    """
+    if not payloads:
+        return 0, None, None
+
+    if len(payloads) == 2:
+        r1 = payloads[0].get("round_info", {})
+        r2 = payloads[1].get("round_info", {})
+        w1 = int(r1.get("winnerteam") or 0)
+        w2 = int(r2.get("winnerteam") or 0)
+        
+        # Duration calculation
+        d1 = int(r1.get("round_end_unix") or 0) - int(r1.get("round_start_unix") or 0)
+        d2 = int(r2.get("round_end_unix") or 0) - int(r2.get("round_start_unix") or 0)
+
+        winner = 0
+        if w1 > 0 and w2 > 0:
+            if w1 != w2:
+                if d1 > 0 and d2 > 0:
+                    if d1 < d2: winner = w1
+                    elif d2 < d1: winner = w2
+                    else: winner = 0
+                else: winner = w2
+            else:
+                if abs(d1 - d2) <= 2: winner = 0
+                elif d1 < d2: winner = w1
+                else: winner = 3 - w1
+        elif w1 > 0: winner = w1
+        elif w2 > 0: winner = w2
+        
+        return winner, d1, d2
+    else:
+        # Single round or 3+
+        r = payloads[-1].get("round_info", {})
+        winner = int(r.get("winnerteam") or 0)
+        d = int(r.get("round_end_unix") or 0) - int(r.get("round_start_unix") or 0)
+        return winner, d, None
 
 
 def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw: bool = True, target_db_match_id: int = None) -> Match:
@@ -246,55 +293,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         # A more robust way would be to return None and check in the router.
         return None
 
-    # Winner determination logic
-    winner_team = 0
-    if len(payloads) == 2:
-        # Stopwatch logic: compare durations of winning rounds
-        r1 = payloads[0].get("round_info", {})
-        r2 = payloads[1].get("round_info", {})
-        w1 = int(r1.get("winnerteam") or 0)
-        w2 = int(r2.get("winnerteam") or 0)
-        
-        # Calculate durations in seconds
-        d1 = int(r1.get("round_end_unix") or 0) - int(r1.get("round_start_unix") or 0)
-        d2 = int(r2.get("round_end_unix") or 0) - int(r2.get("round_start_unix") or 0)
-        
-        if w1 > 0 and w2 > 0:
-            # Both teams won their round.
-            # In Stopwatch, winnerteam=1 (Axis) in both rounds means a Full Hold for each team (Draw).
-            if w1 == 1 and w2 == 1:
-                if d1 == d2:
-                    winner_team = 0 # Double Full Hold -> Draw
-                elif d1 < d2:
-                    winner_team = w1
-                else:
-                    winner_team = w2
-            elif w1 != w2:
-                # One team won as Axis, other won as Allies.
-                # Standard duration comparison.
-                if d1 > 0 and d2 > 0:
-                    if d1 < d2:
-                        winner_team = w1
-                    elif d2 < d1:
-                        winner_team = w2
-                    else:
-                        winner_team = 0 # Draw
-                else:
-                    winner_team = w2 # Fallback
-            else:
-                # Both won as Allies (index 2)? Rare but same logic.
-                if d1 < d2: winner_team = w1
-                elif d2 < d1: winner_team = w2
-                else: winner_team = 0
-        elif w1 > 0:
-            winner_team = w1
-        elif w2 > 0:
-            winner_team = w2
-        else:
-            winner_team = 0
-    else:
-        # Single round or more than 2 rounds: take the last known result
-        winner_team = int(payloads[-1].get("round_info", {}).get("winnerteam") or round_info_primary.get("winnerteam") or 0)
+    # Initial winner determination from the incoming payloads.
+    # NOTE: For Stopwatch matches this is often only 1 round (the server sends rounds one at a time).
+    # The definitive winner is recalculated after merging with existing DB payloads — see below.
+    winner_team, d1, d2 = _determine_winner_team(payloads)
     
     rs, _ = get_epoch(payloads[0])
     _, re = get_epoch(payloads[-1])
@@ -407,7 +409,18 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             PlayerMatchStats.round_index.in_([0] + processing_round_indices)
         ).delete()
         
+        # --- RECOMPUTE WINNER FROM THE FULL MERGED PAYLOAD SET ---
+        # The game server posts one round at a time. When Round 2 arrives and merges here,
+        # `payloads` now contains BOTH rounds (loaded from MatchPayload table above).
+        # We must re-run winner determination so that Stopwatch duration comparisons
+        # and draw detection have access to both rounds, then persist the result.
+        winner_team, d1, d2 = _determine_winner_team(payloads)
+        print(f"DEBUG: Recomputed winner_team={winner_team} (d1={d1}, d2={d2}) from {len(payloads)} merged round(s) for match {match_id}")
+
         existing.mapname = mapname
+        existing.winner_team = winner_team
+        existing.round1_duration = d1
+        existing.round2_duration = d2
         existing.round_start_unix = min(existing.round_start_unix, rs)
         existing.round_end_unix = max(existing.round_end_unix, re)
         match_row = existing
@@ -418,6 +431,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             match_id=match_id,
             mapname=mapname,
             winner_team=winner_team,
+            round1_duration=d1,
+            round2_duration=d2,
             round_start_unix=rs,
             round_end_unix=re,
             # We also save to the legacy raw_payload for backward compatibility/backup for now
@@ -1125,6 +1140,19 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         
         weapon_acc = (total_hits / total_shots * 100.0) if total_shots > 0 else 0.0
 
+        # Determine if primarily a medic (>50% time)
+        is_medic = False
+        if ts.classes_played_json:
+            try:
+                classes = json.loads(ts.classes_played_json)
+                # Class 1 is Medic in ET
+                medic_time = classes.get("1", 0)
+                total_time = sum(classes.values())
+                if total_time > 0 and (medic_time / total_time) > 0.5:
+                    is_medic = True
+            except:
+                pass
+
         performances.append(
             PlayerPerformance(
                 player_id=player.id,
@@ -1137,6 +1165,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 self_kills=ts.self_kills,
                 mu=mu,
                 sigma=sigma,
+                is_medic=is_medic,
             )
         )
 
@@ -1164,23 +1193,22 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             player_id=res.player_id,
             match_id=match_row.id,
             rating=new_rating,
-            delta=new_rating - gr.current_rating,
+            delta=res.delta_rating,
             mu=res.new_mu,
             sigma=res.new_sigma,
         )
         db.add(hist)
         gr.current_rating = new_rating
 
-    # Calculate MVP
+    # Calculate MVP using the same Unified Efficiency logic as SR
     best_score = -1.0
     mvp_pid = None
     for res in rating_results:
         perf = next((p for p in performances if p.player_id == res.player_id), None)
         if perf:
-            # MVP Score matches the new get_score logic roughly
-            tactical_eff = ((perf.kills + perf.revives + (perf.damage_given / 100.0)) / max(1, perf.kills + perf.revives + (perf.damage_given / 100.0) + perf.deaths + perf.self_kills)) * 100.0
-            score = (tactical_eff * 0.85) + (min(100.0, perf.xp * 0.15))
+            score = get_performance_score(perf)
             
+            # Tiny bias for winners to break ties
             if winner_team > 0 and perf.team == winner_team:
                 score += 0.01
             
@@ -1226,6 +1254,30 @@ def recalculate_all_ratings(db: Session):
         if not stats_rows:
             continue
 
+        # Re-derive winner_team from stored MatchPayload rounds.
+        # The m.winner_team field was historically set from Round 1 only (corrupt for SW matches).
+        # By re-running _determine_winner_team with all stored rounds, we get the correct result.
+        payload_rows = (
+            db.query(MatchPayload)
+            .filter(MatchPayload.match_id == m.id)
+            .order_by(MatchPayload.round_number)
+            .all()
+        )
+        if payload_rows:
+            stored_payloads = [json.loads(pr.payload) for pr in payload_rows]
+            derived_winner, d1, d2 = _determine_winner_team(stored_payloads)
+        else:
+            # No relational payloads: fall back to stored value (legacy matches)
+            derived_winner = m.winner_team
+            d1, d2 = None, None
+
+        # Persist the corrected winner and durations so future recalcs are self-healing
+        if derived_winner != m.winner_team or d1 != m.round1_duration or d2 != m.round2_duration:
+            print(f"DEBUG: Correcting match {m.id}: winner_team={derived_winner}, d1={d1}, d2={d2}")
+            m.winner_team = derived_winner
+            m.round1_duration = d1
+            m.round2_duration = d2
+
         performances = []
         for row in stats_rows:
             gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == row.player_id).one_or_none()
@@ -1269,7 +1321,7 @@ def recalculate_all_ratings(db: Session):
                 sigma=gr.sigma
             ))
 
-        rating_results = calculate_openskill_ratings(performances, m.winner_team)
+        rating_results = calculate_openskill_ratings(performances, derived_winner)
 
         for res in rating_results:
             gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == res.player_id).one()
@@ -1278,7 +1330,7 @@ def recalculate_all_ratings(db: Session):
             match_counts[res.player_id] += 1
             
             new_rating = compute_display_rating(res.new_mu, res.new_sigma, match_count=match_counts[res.player_id])
-            delta = new_rating - gr.current_rating
+            delta = res.delta_rating
             
             gr.mu = res.new_mu
             gr.sigma = res.new_sigma

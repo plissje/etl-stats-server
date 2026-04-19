@@ -17,6 +17,8 @@ class MatchSummaryOut(BaseModel):
     winner_team: int
     round_start_unix: int
     round_end_unix: int
+    round1_duration: int | None = None
+    round2_duration: int | None = None
     axis_players: list[str] = []
     allies_players: list[str] = []
     mvp_name: str | None = None
@@ -44,6 +46,7 @@ class PlayerMatchRowOut(BaseModel):
     team_medpacks: int
     spam_kills: int
     xp: int
+    sr_delta: float | None = None
 
     distance_travelled_meters: float
     distance_travelled_spawn_avg: float

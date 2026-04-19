@@ -199,11 +199,29 @@ def recalculate_ratings(db: Session = Depends(get_db)):
 @router.get("/match/{match_db_id}/raw")
 def get_match_raw(match_db_id: int, db: Session = Depends(get_db)):
     """
-    Exposes the raw_payload for a given match (for debugging only).
+    Exposes the raw round payloads for a given match (for debugging only).
+    Reads from the relational MatchPayload table which contains all rounds in order.
+    Falls back to the legacy raw_payload column for very old matches.
     """
+    from app.models import MatchPayload
     m = db.query(Match).filter(Match.id == match_db_id).one_or_none()
     if not m:
         raise HTTPException(404, "match not found")
+
+    # Prefer relational table (has all rounds)
+    payload_rows = (
+        db.query(MatchPayload)
+        .filter(MatchPayload.match_id == m.id)
+        .order_by(MatchPayload.round_number)
+        .all()
+    )
+    if payload_rows:
+        try:
+            return [json.loads(row.payload) for row in payload_rows]
+        except Exception as e:
+            return {"error": f"Failed to parse relational payloads: {e}"}
+
+    # Fallback: legacy raw_payload column (Round 1 only)
     if not m.raw_payload:
         return {"error": "no raw payload stored for this match"}
     try:

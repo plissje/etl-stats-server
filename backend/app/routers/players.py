@@ -399,13 +399,15 @@ def player_profile(
                 
     aliases = unique_aliases
 
-    # Optimized history query: join with Match and only select required columns
+    # Optimized history query: join with Match and RatingHistory
     recent_pms = (
         db.query(
             PlayerMatchStats.team, PlayerMatchStats.kills, PlayerMatchStats.deaths, PlayerMatchStats.xp,
-            Match.id, Match.mapname, Match.winner_team, Match.round_start_unix
+            Match.id, Match.mapname, Match.winner_team, Match.round_start_unix,
+            PlayerGatherRatingHistory.delta
         )
         .join(Match, Match.id == PlayerMatchStats.match_id)
+        .outerjoin(PlayerGatherRatingHistory, (PlayerGatherRatingHistory.player_id == PlayerMatchStats.player_id) & (PlayerGatherRatingHistory.match_id == PlayerMatchStats.match_id))
         .filter(PlayerMatchStats.player_id == pl.id, PlayerMatchStats.round_index == 0)
         .order_by(Match.round_start_unix.desc())
         .offset(skip)
@@ -424,6 +426,7 @@ def player_profile(
             "deaths": r.deaths,
             "xp": r.xp,
             "timestamp": r.round_start_unix,
+            "sr_delta": r.delta,
         })
 
     duration = time.time() - start_time

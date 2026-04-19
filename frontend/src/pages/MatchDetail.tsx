@@ -5,7 +5,7 @@ import { QuakeName } from '../components/QuakeName'
 
 type SortKey = keyof Pick<PlayerRow,
   'eff' | 'kdr' | 'kills' | 'deaths' | 'damage_given' | 'damage_received' |
-  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'time_played_pct' | 'unified_eff'
+  'headshots' | 'gibs' | 'self_kills' | 'team_kills' | 'revives' | 'time_played_pct' | 'unified_eff' | 'sr_delta'
 >
 type SortDir = 'asc' | 'desc'
 
@@ -119,6 +119,7 @@ const COLS: { key: SortKey; label: string; title?: string; defaultDesc?: boolean
   { key: 'revives', label: 'REV', title: 'Revives', defaultDesc: true, width: '50px' },
   { key: 'time_played_pct', label: 'TIME', title: 'Time Played %', defaultDesc: true, width: '55px' },
   { key: 'unified_eff', label: 'UE', title: 'Unified Efficiency', defaultDesc: true, width: '70px' },
+  { key: 'sr_delta', label: 'SR Δ', title: 'Skill Rating Change', defaultDesc: true, width: '60px' },
 ]
 
 function colColor(key: SortKey, val: number, row?: PlayerRow): string {
@@ -135,6 +136,11 @@ function colColor(key: SortKey, val: number, row?: PlayerRow): string {
     if (val > row.damage_given) return 'text-rose-400'
     return 'text-zinc-300'
   }
+  if (key === 'sr_delta') {
+    if (val > 0) return 'text-emerald-400 font-bold'
+    if (val < 0) return 'text-rose-400'
+    return 'text-zinc-500'
+  }
   return 'text-zinc-300'
 }
 
@@ -142,6 +148,7 @@ function formatVal(key: SortKey, val: number): string {
   if (key === 'eff') return Math.round(val).toString()
   if (key === 'unified_eff' || key === 'kdr') return val % 1 === 0 ? val.toString() : val.toFixed(1)
   if (key === 'time_played_pct') return val ? Math.round(val) + '%' : '-'
+  if (key === 'sr_delta') return val !== undefined && val !== null ? (val > 0 ? `+${val.toFixed(1)}` : val.toFixed(1)) : '-'
   return val.toString()
 }
 
@@ -365,6 +372,22 @@ export function MatchDetail() {
                match.winner_team === 2 ? 'Beta Win' : 'Draw Match'}
             </div>
               {duration && <span className="text-zinc-400 font-mono bg-zinc-800/80 px-2 py-1 rounded">{duration}</span>}
+              {(match.round1_duration || match.round2_duration) && (
+                <div className="flex items-center gap-2 text-zinc-500 font-mono text-xs bg-zinc-900/50 px-2.5 py-1 rounded border border-zinc-800">
+                  <span className="text-zinc-600 uppercase text-[9px] font-bold tracking-tighter mr-1">Set Times</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-bold ${match.round1_duration && match.round2_duration && match.round1_duration < match.round2_duration ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                      <span className="opacity-50 mr-0.5">β:</span>
+                      {match.round1_duration ? `${Math.floor(match.round1_duration/60)}:${String(match.round1_duration%60).padStart(2,'0')}` : '—'}
+                    </span>
+                    <span className="opacity-30">/</span>
+                    <span className={`text-[10px] font-bold ${match.round1_duration && match.round2_duration && match.round2_duration < match.round1_duration ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                      <span className="opacity-50 mr-0.5">α:</span>
+                      {match.round2_duration ? `${Math.floor(match.round2_duration/60)}:${String(match.round2_duration%60).padStart(2,'0')}` : '—'}
+                    </span>
+                  </div>
+                </div>
+              )}
               {matchDate && <span className="text-zinc-500 font-mono text-xs">{matchDate}</span>}
             </div>
           </div>

@@ -169,15 +169,27 @@ export function Matches() {
                             : <span className="text-zinc-600 text-sm italic">—</span>}
                         </div>
                         {/* Secondary: Map, result, MVP, date */}
-                      <div className="flex items-center gap-3 flex-wrap pt-1">
-                        {date && <span className="text-zinc-500 text-[10px] font-mono font-bold flex items-center gap-1 bg-zinc-800/30 px-2 py-0.5 rounded border border-zinc-700/20">🕒 {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
-                        <span className="text-zinc-500 text-xs font-mono tracking-wide">📍 {m.mapname || '(unknown)'}</span>
-                        {m.mvp_name && (
-                          <span className="text-amber-400 text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded flex items-center gap-1">
-                            ⭐ MVP: {m.mvp_name}
-                          </span>
-                        )}
-                      </div>
+                        <div className="flex items-center gap-3 flex-wrap pt-1">
+                          {date && <span className="text-zinc-500 text-[10px] font-mono font-bold flex items-center gap-1 bg-zinc-800/30 px-2 py-0.5 rounded border border-zinc-700/20">🕒 {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                          <span className="text-zinc-500 text-xs font-mono tracking-wide">📍 {m.mapname || '(unknown)'}</span>
+                          {(m.round1_duration || m.round2_duration) && (
+                            <span className="text-zinc-500 text-[10px] font-mono font-bold bg-zinc-800/30 px-2 py-0.5 rounded border border-zinc-700/20 flex items-center gap-1.5">
+                              ⏱️ 
+                              <span>
+                                <span className="opacity-40 mr-0.5 text-[8px]">β:</span>{m.round1_duration ? `${Math.floor(m.round1_duration/60)}:${String(m.round1_duration%60).padStart(2,'0')}` : '—'}
+                              </span>
+                              <span className="opacity-20 mx-0.5">/</span>
+                              <span>
+                                <span className="opacity-40 mr-0.5 text-[8px]">α:</span>{m.round2_duration ? `${Math.floor(m.round2_duration/60)}:${String(m.round2_duration%60).padStart(2,'0')}` : '—'}
+                              </span>
+                            </span>
+                          )}
+                          {m.mvp_name && (
+                            <span className="text-amber-400 text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded flex items-center gap-1">
+                              ⭐ MVP: {m.mvp_name}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* RIGHT: Result — ~20% */}

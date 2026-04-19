@@ -38,9 +38,9 @@ function Layout({ children }: { children: ReactNode }) {
               <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center font-black text-white group-hover:bg-indigo-500 transition-all duration-300 shadow-[0_0_20px_rgba(79,70,229,0.4)] group-hover:scale-105 active:scale-95">
                 ETL
               </div>
-              <div className="flex flex-col -gap-1">
-                <span className="text-lg font-black tracking-tighter text-white group-hover:text-indigo-400 transition-colors">STATS</span>
-                <span className="ml-2 px-1.5 py-0.5 rounded-md bg-zinc-800 text-[10px] font-mono text-zinc-500 border border-zinc-700/50 leading-none">v{version}</span>
+              <div className="flex flex-col items-start leading-none">
+                <span className="text-lg font-black tracking-tighter text-white group-hover:text-indigo-400 transition-colors leading-none">STATS</span>
+                <span className="px-1.5 py-0.5 rounded-md bg-zinc-800 text-[9px] font-mono text-zinc-500 border border-zinc-700/50 mt-0.5">v{version}</span>
               </div>
             </Link>
           </div>

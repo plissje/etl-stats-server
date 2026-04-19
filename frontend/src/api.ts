@@ -22,6 +22,8 @@ export type MatchSummary = {
   round_end_unix: number
   axis_players: string[]
   allies_players: string[]
+  round1_duration?: number
+  round2_duration?: number
   mvp_name?: string
   mvp_guid?: string
 }
@@ -59,6 +61,7 @@ export type PlayerRow = {
   team_gibs: number
   self_kills: number
   weapon_breakdown: WeaponPerformance[] | null
+  sr_delta?: number | null
 }
 
 export type MatchRivalry = {
@@ -138,6 +141,7 @@ export type PlayerProfile = {
     deaths: number
     xp: number
     timestamp: number
+    sr_delta?: number | null
   }[]
   lifetime_stats?: {
     kills: number

@@ -172,6 +172,7 @@ export function PlayerProfile() {
                   <tr>
                     <th className="px-8 py-4">Map</th>
                     <th className="px-8 py-4">Status</th>
+                    <th className="px-8 py-4">SR Δ</th>
                     <th className="px-8 py-4">Team</th>
                     <th className="px-8 py-4 text-right">K/D/XP</th>
                   </tr>
@@ -193,6 +194,15 @@ export function PlayerProfile() {
                           <span className={`px-2 py-0.5 rounded-[4px] text-[10px] font-black uppercase tracking-tighter ${won ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
                             {won ? 'Victory' : 'Defeat'}
                           </span>
+                        </td>
+                        <td className="px-8 py-5">
+                          {m.sr_delta !== undefined && m.sr_delta !== null ? (
+                            <span className={`text-[11px] font-black font-mono transition-transform group-hover/row:scale-110 inline-block ${m.sr_delta > 0 ? 'text-emerald-400' : m.sr_delta < 0 ? 'text-rose-400' : 'text-zinc-500'}`}>
+                               {m.sr_delta > 0 ? '+' : ''}{Math.round(m.sr_delta * 100) / 100}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-600 font-mono text-xs">-</span>
+                          )}
                         </td>
                         <td className="px-8 py-5 text-[10px] font-black tracking-widest">
                           <span className={m.team === 1 ? 'text-rose-400/80' : 'text-sky-400/80'}>

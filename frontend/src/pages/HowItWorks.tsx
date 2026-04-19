@@ -35,8 +35,8 @@ export function HowItWorks() {
             <div className="flex items-start gap-3 bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/50">
               <Zap className="text-amber-400 shrink-0 mt-1" size={18} />
               <div>
-                <p className="text-sm font-semibold text-zinc-200 uppercase tracking-wider mb-1">The 70/30 Blend</p>
-                <p className="text-zinc-400 text-sm">Your SR change after a match is a weighted blend: 70% is based on your <span className="text-fuchsia-400">Personal Performance</span>, and 30% is based on the <span className="text-violet-400">Match Outcome</span> (Winning/Losing).</p>
+                <p className="text-sm font-semibold text-zinc-200 uppercase tracking-wider mb-1">The 75/25 Hybrid Model</p>
+                <p className="text-zinc-400 text-sm">Your SR change is calculated using a <span className="text-fuchsia-400">75% Performance</span> signal and a <span className="text-violet-400">25% Team Outcome</span> signal. This ensures that losing a random gather doesn't tank your rating if you played exceptionally well.</p>
               </div>
             </div>
           </div>
@@ -62,7 +62,7 @@ export function HowItWorks() {
               <span className="text-zinc-500 uppercase tracking-tighter">Contribution Formula</span>
             </div>
             <div className="text-fuchsia-400 text-base py-2 font-bold tracking-tight">
-              UE = (Points / (Points + Deaths + SelfKills)) * 100
+              UE = (Points / (Points + (Deaths * 1.25) + (SelfKills * 0.5))) * 100
             </div>
           </div>
         </section>
@@ -76,10 +76,10 @@ export function HowItWorks() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Kill', value: '1.0 pt', icon: <Crosshair className="text-red-400" />, desc: 'Fragging power' },
-            { label: 'Revive', value: '0.33 pt', icon: <Star className="text-blue-400" />, desc: 'Supporting teammates' },
-            { label: 'Damage', value: '1.0 pt', icon: <Zap className="text-amber-400" />, desc: 'Per 100 Damage Given' },
-            { label: 'Objective XP', value: '0.10 pt', icon: <Shield className="text-emerald-400" />, desc: 'Engineering & Plants' },
+            { label: 'Kill', value: '1.20 pt', icon: <Crosshair className="text-red-400" />, desc: 'Primary combat reward' },
+            { label: 'Revive', value: '0.20 pt', icon: <Star className="text-blue-400" />, desc: 'Team support impact' },
+            { label: 'Death', value: '-1.25x', icon: <Zap className="text-amber-400" />, desc: 'Denominator penalty' },
+            { label: 'Objective XP', value: '0.30 pt', icon: <Shield className="text-emerald-400" />, desc: 'Plants & Engineering' },
           ].map((item, i) => (
             <div key={i} className="p-6 bg-zinc-900/30 border border-zinc-800 rounded-xl hover:border-zinc-700 transition-colors">
               <div className="flex items-center justify-between mb-4">
@@ -104,7 +104,7 @@ export function HowItWorks() {
               Why this system?
             </h3>
             <p className="text-zinc-400 leading-relaxed">
-              In base Wolfenstein: ET, medics and engineers often have low K/Ds but win the game. By giving a <strong className="text-violet-400">Revive a 0.33 weight</strong>, and rewarding objective progression via XP, we ensure the standings reflect the players who actually carry their teams to victory while still rewarding support play.
+              In Wolfenstein: ET, support roles are often undervalued. Our system is <strong className="text-violet-400">Class-Aware</strong>: Medics have XP weights capped at <strong className="text-violet-400">0.05</strong> to prioritize revives, while objective classes (Engineers/Soldiers/Coverts) receive a <strong className="text-violet-400">0.30 XP weight</strong> to reward mission-critical plays.
             </p>
           </div>
           <div className="p-8 bg-zinc-900/20 border-l-4 border-fuchsia-500 rounded-lg">
@@ -117,16 +117,32 @@ export function HowItWorks() {
             </p>
           </div>
           <div className="bg-zinc-900/40 border border-fuchsia-500/20 p-8 rounded-2xl">
-            <h3 className="text-xl font-bold text-white mb-4">The 70/30 Competitive Rule</h3>
+            <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+              <Zap size={20} className="text-amber-400" />
+              Stopwatch Logic
+            </h3>
+            <p className="text-zinc-400 leading-relaxed mb-6">
+              Competitive ET is played in two rounds. The winner is determined by the <strong className="text-white">fastest objective completion</strong>. 
+              If Team A finishes in 12:30, Team B must beat that time to win. If neither team completes the objective, the match is a <span className="text-zinc-300 font-bold italic">Draw</span>.
+            </p>
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+              <p className="text-xs text-amber-200 uppercase tracking-widest font-bold mb-1">Set Time Winner</p>
+              <p className="text-sm text-amber-100/80">
+                The UI highlights the <span className="font-bold text-emerald-400 underline decoration-emerald-500/30">emerald green time</span> as the winning set time.
+              </p>
+            </div>
+          </div>
+          <div className="bg-zinc-900/40 border border-fuchsia-500/20 p-8 rounded-2xl">
+            <h3 className="text-xl font-bold text-white mb-4">The 75/25 Competitive Rule</h3>
             <p className="text-zinc-400 leading-relaxed mb-6">
               In scramble-based gathers, "Team Win" can sometimes be lucky. To fix this, we split each match:
-              <strong className="text-fuchsia-400"> 70%</strong> individual performance vs team avg, and 
-              <strong className="text-fuchsia-400"> 30%</strong> overall team result.
+              <strong className="text-fuchsia-400"> 75%</strong> individual performance vs team avg, and 
+              <strong className="text-fuchsia-400"> 25%</strong> overall team result.
             </p>
             <div className="p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl">
               <p className="text-xs text-fuchsia-200 uppercase tracking-widest font-bold mb-1">Sliding Confidence Scale</p>
               <p className="text-sm text-fuchsia-100/80">
-                A <span className="font-bold text-white italic">1.5x Sensitivity</span> multiplier is applied to your impact. 
+                A <span className="font-bold text-white italic">1.15x Impact</span> multiplier is applied to your performance. 
                 We use <span className="text-white italic">2.0σ</span> for your first 10 games to find your rank fast, then slide to <span className="text-white italic">3.0σ</span> for maximum stability as a veteran.
               </p>
             </div>
@@ -143,7 +159,7 @@ export function HowItWorks() {
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />
-              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">30% Team Result</span>. It is still better to win the game, but your personal impact is the primary driver of your rank.</p>
+              <p className="text-sm text-zinc-300">Win as a team for the <span className="font-bold text-white">25% Team Result</span>. It is still better to win the game, but your personal impact is the primary driver of your rank.</p>
             </li>
             <li className="flex gap-4">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 mt-2 shrink-0" />

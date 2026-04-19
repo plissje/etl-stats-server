@@ -13,7 +13,7 @@ from app.utils import record_slow_query
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
 
-def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
+def _row(pms: PlayerMatchStats, pl: Player, sr_delta: float | None = None) -> PlayerMatchRowOut:
     wb = None
     if pms.weapon_breakdown_json:
         try:
@@ -52,6 +52,7 @@ def _row(pms: PlayerMatchStats, pl: Player) -> PlayerMatchRowOut:
         self_kills=pms.self_kills,
         xp=pms.xp,
         weapon_breakdown=wb,
+        sr_delta=sr_delta,
     )
 
 
@@ -146,6 +147,8 @@ def list_matches(
             winner_team=m.winner_team,
             round_start_unix=m.round_start_unix,
             round_end_unix=m.round_end_unix,
+            round1_duration=m.round1_duration,
+            round2_duration=m.round2_duration,
             axis_players=sorted(axis_names),
             allies_players=sorted(allies_names),
             mvp_name=m.mvp_player.display_name if m.mvp_player else mvp_name,
@@ -163,17 +166,19 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
     m = db.query(Match).options(defer(Match.raw_payload)).filter(Match.id == match_db_id).one_or_none()
     if not m:
         raise HTTPException(404, "match not found")
+    from app.models import PlayerGatherRatingHistory
     rows = (
-        db.query(PlayerMatchStats, Player)
+        db.query(PlayerMatchStats, Player, PlayerGatherRatingHistory.delta)
         .join(Player, Player.id == PlayerMatchStats.player_id)
+        .outerjoin(PlayerGatherRatingHistory, (PlayerGatherRatingHistory.player_id == PlayerMatchStats.player_id) & (PlayerGatherRatingHistory.match_id == PlayerMatchStats.match_id))
         .filter(PlayerMatchStats.match_id == m.id)
         .all()
     )
     axis, allies = [], []
     axis_round1, allies_round1 = [], []
     axis_round2, allies_round2 = [], []
-    for pms, pl in rows:
-        r = _row(pms, pl)
+    for pms, pl, sr_delta in rows:
+        r = _row(pms, pl, sr_delta)
         if pms.round_index == 0:
             if pms.team == 1: axis.append(r)
             else: allies.append(r)
@@ -193,9 +198,9 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
 
     max_rivalry = None
     max_count = 0
-    guid_to_name = {p.guid: p.display_name for _, p in rows}
+    guid_to_name = {pl.guid: pl.display_name for pms, pl, sr_delta in rows}
 
-    for pms, pl in rows:
+    for pms, pl, sr_delta in rows:
         if not pms.nemesis_json:
             continue
         try:
@@ -216,7 +221,7 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
     # Team-agnostic MVP logic
     best_score = -1.0
     mvp = None
-    for pms, pl in rows:
+    for pms, pl, sr_delta in rows:
         if pms.round_index != 0: continue
         score = pms.eff + (pms.xp / 10.0)
         if m.winner_team > 0 and pms.team == m.winner_team:
@@ -239,9 +244,12 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             winner_team=m.winner_team,
             round_start_unix=m.round_start_unix,
             round_end_unix=m.round_end_unix,
+            round1_duration=m.round1_duration,
+            round2_duration=m.round2_duration,
             axis_players=[r.name_display for r in axis],
             allies_players=[r.name_display for r in allies],
             mvp_name=mvp.display_name if mvp else None,
+            mvp_guid=mvp.guid if mvp else None,
         ),
         axis=axis,
         allies=allies,
