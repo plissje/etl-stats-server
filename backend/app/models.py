@@ -19,8 +19,17 @@ class Match(Base):
     round1_duration: Mapped[int | None] = mapped_column(Integer, nullable=True)
     round2_duration: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    is_gather: Mapped[bool] = mapped_column(Integer, default=0) # 0=no, 1=yes
+    match_winner_raw: Mapped[str | None] = mapped_column(String(16), nullable=True) # alpha/beta/draw
 
     mvp_player_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("players.id"), nullable=True, index=True)
+
+    round1_alpha_side: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    round2_alpha_side: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    server_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    server_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     player_stats: Mapped[list["PlayerMatchStats"]] = relationship(
         "PlayerMatchStats", back_populates="match", cascade="all, delete-orphan"
@@ -108,6 +117,10 @@ class PlayerMatchStats(Base):
     revives: Mapped[int] = mapped_column(Integer, default=0)
     medkits: Mapped[int] = mapped_column(Integer, default=0)
     team_medpacks: Mapped[int] = mapped_column(Integer, default=0)
+    pickup_medkits: Mapped[int] = mapped_column(Integer, default=0)
+    pickup_ammopacks: Mapped[int] = mapped_column(Integer, default=0)
+    shoves_given: Mapped[int] = mapped_column(Integer, default=0)
+    shoves_received: Mapped[int] = mapped_column(Integer, default=0)
     spam_kills: Mapped[int] = mapped_column(Integer, default=0)
 
     distance_travelled_meters: Mapped[float] = mapped_column(Float, default=0.0)
@@ -118,7 +131,12 @@ class PlayerMatchStats(Base):
     crouched_seconds: Mapped[int] = mapped_column(Integer, default=0)
     proned_seconds: Mapped[int] = mapped_column(Integer, default=0)
     leaned_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    in_mg_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    in_sprint_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    in_disguise_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    is_downed_seconds: Mapped[int] = mapped_column(Integer, default=0)
     classes_played_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    objectives_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     hs_accuracy_event: Mapped[float | None] = mapped_column(Float, nullable=True)
     nemesis_json: Mapped[str | None] = mapped_column(Text, nullable=True)

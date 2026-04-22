@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -12,14 +12,16 @@ router = APIRouter(prefix="/api", tags=["stats"])
 
 
 @router.post("/submit-stats", dependencies=[Depends(verify_stats_token)])
-def submit_stats(body: SubmitStatsBody | list[SubmitStatsBody], db: Session = Depends(get_db)) -> dict:
+def submit_stats(request: Request, body: SubmitStatsBody | list[SubmitStatsBody], db: Session = Depends(get_db)) -> dict:
     try:
         if isinstance(body, list):
             payloads = [p.model_dump(exclude_none=True) for p in body]
         else:
             payloads = [body.model_dump(exclude_none=True)]
         
-        match_row = ingest_match_payloads(db, payloads)
+        # Extract client IP as a fallback for server identification
+        client_ip = request.client.host
+        match_row = ingest_match_payloads(db, payloads, request_ip=client_ip)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return {"ok": True, "match_db_id": match_row.id, "match_id": match_row.match_id}

@@ -145,6 +145,33 @@ def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int |
     if not payloads:
         return 0, None, None
 
+    # HEURISTIC 1: Trust engine-side score tracking if available in metadata
+    # The Lua script calculates this using exact engine state/rules.
+    for p in reversed(payloads):
+        meta = p.get("metadata") or {}
+        scores = meta.get("scores")
+        if scores and scores.get("match_winner"):
+            mw = scores["match_winner"]
+            if mw == "draw":
+                return 0, None, None # It's a draw
+            
+            # The 'round' block in scores tells us the winner of the round that just ended
+            round_score = scores.get("round")
+            if round_score and round_score.get("winner_et"):
+                # If the match is finished, the match_winner reflects the overall winner.
+                # However, our backend 'winner_team' usually stores the winner of the 
+                # LAST round if it decided the match (or the side that won the map).
+                # For now, if match_winner matches the last round winner, we return that team.
+                if mw == round_score.get("winner"):
+                    winner = int(round_score.get("winner_et"))
+                    # Still calculate durations for display
+                    r1 = payloads[0].get("round_info", {})
+                    r2 = payloads[1].get("round_info", {}) if len(payloads) > 1 else {}
+                    d1 = int(r1.get("round_end_unix") or 0) - int(r1.get("round_start_unix") or 0)
+                    d2 = int(r2.get("round_end_unix") or 0) - int(r2.get("round_start_unix") or 0) if r2 else None
+                    return winner, d1, d2
+
+    # HEURISTIC 2: Manual Stopwatch/Duration logic (Fallback)
     if len(payloads) == 2:
         r1 = payloads[0].get("round_info", {})
         r2 = payloads[1].get("round_info", {})
@@ -158,15 +185,15 @@ def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int |
         winner = 0
         if w1 > 0 and w2 > 0:
             if w1 != w2:
-                if d1 > 0 and d2 > 0:
-                    if d1 < d2: winner = w1
-                    elif d2 < d1: winner = w2
-                    else: winner = 0
-                else: winner = w2
+                # One physical team won both rounds (one as attacker, one as defender).
+                # The winner of the match is the team that won Round 1.
+                winner = w1
             else:
-                if abs(d1 - d2) <= 2: winner = 0
-                elif d1 < d2: winner = w1
-                else: winner = 3 - w1
+                # Same engine side won both rounds (e.g., both won as Allies).
+                # This happens if both teams completed the objective. The faster one wins.
+                if d1 < d2: winner = w1
+                elif d2 < d1: winner = 3 - w1
+                else: winner = 0 # True draw (identical times)
         elif w1 > 0: winner = w1
         elif w2 > 0: winner = w2
         
@@ -179,7 +206,7 @@ def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int |
         return winner, d, None
 
 
-def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw: bool = True, target_db_match_id: int = None) -> Match:
+def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw: bool = True, target_db_match_id: int = None, request_ip: str = None) -> Match:
     if not payloads:
         raise ValueError("no payloads provided")
 
@@ -280,23 +307,52 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     if not match_id:
         raise ValueError("missing matchID")
 
-    print(f"DEBUG: Ingesting payload for matchID: {match_id}")
+    # Extract server info from payloads
+    server_ip = None
+    server_port = None
+    for p in payloads:
+        ri = p.get("round_info") or {}
+        if ri.get("server_ip"):
+            server_ip = str(ri["server_ip"])
+        if ri.get("server_port"):
+            server_port = int(ri["server_port"])
+            
+    # Fallback to request IP if not in payload
+    if not server_ip:
+        server_ip = request_ip
 
     mapname = str(metadata_primary.get("mapname") or round_info_primary.get("mapname") or "")
     
     # Exclude certain maps from tracking
     if mapname.lower() in ("mp_sillyctf", "mp_valhalla"):
         print(f"DEBUG: Skipping matchID {match_id} because map '{mapname}' is in exclusion list.")
-        # We need to return something that won't break the caller. 
-        # Returning a dummy match or raising SkipMatch might be better.
-        # For now, let's assume the caller handles Match objects.
-        # A more robust way would be to return None and check in the router.
         return None
 
     # Initial winner determination from the incoming payloads.
     # NOTE: For Stopwatch matches this is often only 1 round (the server sends rounds one at a time).
     # The definitive winner is recalculated after merging with existing DB payloads — see below.
     winner_team, d1, d2 = _determine_winner_team(payloads)
+    
+    # GATHER DETECTION: Check features in metadata
+    is_gather = 0
+    if metadata_primary.get("features"):
+        # If any gather feature like auto_scores, auto_rename is on, it's a gather match
+        is_gather = 1
+    
+    match_winner_raw = None
+    r1_alpha_side_meta = None
+    # Extract the string winner (alpha/beta/draw) and Alpha side mapping
+    for p in payloads:
+        meta = p.get("metadata") or {}
+        scores = meta.get("scores")
+        if scores:
+            if scores.get("match_winner"):
+                match_winner_raw = scores["match_winner"]
+            
+            # Check for Alpha side in any round metadata
+            round_meta = scores.get("round")
+            if round_meta and round_meta.get("round_num") == 1:
+                r1_alpha_side_meta = round_meta.get("alpha_side")
     
     rs, _ = get_epoch(payloads[0])
     _, re = get_epoch(payloads[-1])
@@ -305,19 +361,24 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     existing = db.query(Match).filter(Match.match_id == match_id).one_or_none()
     
     if not existing:
-        # 2. Heuristic: Check for a recent match on the same map (within 30 mins)
+        # 2. Heuristic: Check for a recent match on the same map and SAME SERVER (within 30 mins)
         # This allows Round 2 to merge even if it was assigned a different Match ID.
         # Anchor threshold to the round start time (rs) to support historical reprocessing.
         recent_threshold = rs - (30 * 60)
         
-        recent_match = (
+        recent_match_query = (
             db.query(Match)
             .filter(Match.mapname == mapname)
             .filter(Match.round_end_unix >= recent_threshold)
             .filter(Match.round_end_unix <= rs)
-            .order_by(Match.round_end_unix.desc())
-            .first()
         )
+
+        if server_ip:
+            recent_match_query = recent_match_query.filter(Match.server_ip == server_ip)
+        if server_port:
+            recent_match_query = recent_match_query.filter(Match.server_port == server_port)
+
+        recent_match = recent_match_query.order_by(Match.round_end_unix.desc()).first()
         if recent_match:
             print(f"DEBUG: Found recent match for map '{mapname}' (ID: {recent_match.match_id}) - adopting for round merging.")
             existing = recent_match
@@ -410,31 +471,113 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         ).delete()
         
         # --- RECOMPUTE WINNER FROM THE FULL MERGED PAYLOAD SET ---
-        # The game server posts one round at a time. When Round 2 arrives and merges here,
-        # `payloads` now contains BOTH rounds (loaded from MatchPayload table above).
-        # We must re-run winner determination so that Stopwatch duration comparisons
-        # and draw detection have access to both rounds, then persist the result.
         winner_team, d1, d2 = _determine_winner_team(payloads)
-        print(f"DEBUG: Recomputed winner_team={winner_team} (d1={d1}, d2={d2}) from {len(payloads)} merged round(s) for match {match_id}")
+        
+        # Determine the definitive Alpha Side for Round 1
+        # Priority: Metadata > Existing DB > Default (1=Axis)
+        alpha_side_r1 = r1_alpha_side_meta or existing.round1_alpha_side or 1
+        existing.round1_alpha_side = alpha_side_r1
+        
+        # Map Engine Winner to Pinned Winner
+        engine_to_pinned = {1: 1, 2: 2}
+        p1_stats = payloads[0].get("player_stats") or {}
+        if p1_stats:
+            sample_guid = next(iter(p1_stats))
+            sample_pdata = p1_stats[sample_guid]
+            engine_team = int(sample_pdata.get("team") or 0)
+            engine_side = int(sample_pdata.get("side") or 0)
+            # If we don't have 'side' in player stats, we use defenderteam heuristic
+            if engine_side == 0:
+                ri_p = payloads[0].get("round_info") or {}
+                defender_et = ri_p.get("defenderteam")
+                if defender_et:
+                    # In ET, defender is usually Axis (Side 1) or Allies (Side 2)
+                    # For Bremen/Goldrush, Axis (1) defends.
+                    # We assume defender_et corresponds to Side 1 (Axis) for now.
+                    engine_side = 1 if engine_team == defender_et else 2
 
+            if engine_team in (1, 2) and engine_side in (1, 2):
+                if engine_side == alpha_side_r1:
+                    engine_to_pinned = {engine_team: 1, (3 - engine_team): 2}
+                else:
+                    engine_to_pinned = {engine_team: 2, (3 - engine_team): 1}
+        
+        # Calculate final winner
+        # Priority: Explicit match_winner_raw > Custom Logic
+        if match_winner_raw == "alpha":
+            final_winner = 1
+        elif match_winner_raw == "beta":
+            final_winner = 2
+        elif match_winner_raw == "draw":
+            final_winner = 0
+        else:
+            final_winner = engine_to_pinned.get(winner_team, winner_team)
+            
         existing.mapname = mapname
-        existing.winner_team = winner_team
+        existing.winner_team = final_winner
         existing.round1_duration = d1
         existing.round2_duration = d2
         existing.round_start_unix = min(existing.round_start_unix, rs)
         existing.round_end_unix = max(existing.round_end_unix, re)
+        existing.is_gather = is_gather
+        existing.match_winner_raw = match_winner_raw
+        if server_ip: existing.server_ip = server_ip
+        if server_port: existing.server_port = server_port
         match_row = existing
         db.flush()
     else:
         print(f"DEBUG: Creating new match record for matchID {match_id}")
+        
+        # --- RECOMPUTE WINNER ---
+        winner_team, d1, d2 = _determine_winner_team(payloads)
+        
+        # Determine the definitive Alpha Side for Round 1
+        # Priority: Metadata > Default (1=Axis)
+        alpha_side_r1 = r1_alpha_side_meta or 1
+        
+        # Map Engine Winner to Pinned Winner
+        engine_to_pinned = {1: 1, 2: 2}
+        p1_stats = payloads[0].get("player_stats") or {}
+        if p1_stats:
+            sample_guid = next(iter(p1_stats))
+            sample_pdata = p1_stats[sample_guid]
+            engine_team = int(sample_pdata.get("team") or 0)
+            engine_side = int(sample_pdata.get("side") or 0)
+            if engine_side == 0:
+                ri_p = payloads[0].get("round_info") or {}
+                defender_et = ri_p.get("defenderteam")
+                if defender_et:
+                    engine_side = 1 if engine_team == defender_et else 2
+
+            if engine_team in (1, 2) and engine_side in (1, 2):
+                if engine_side == alpha_side_r1:
+                    engine_to_pinned = {engine_team: 1, (3 - engine_team): 2}
+                else:
+                    engine_to_pinned = {engine_team: 2, (3 - engine_team): 1}
+        
+        # Calculate final winner
+        if match_winner_raw == "alpha":
+            final_winner = 1
+        elif match_winner_raw == "beta":
+            final_winner = 2
+        elif match_winner_raw == "draw":
+            final_winner = 0
+        else:
+            final_winner = engine_to_pinned.get(winner_team, winner_team)
+
         match_row = Match(
             match_id=match_id,
             mapname=mapname,
-            winner_team=winner_team,
+            winner_team=final_winner,
             round1_duration=d1,
             round2_duration=d2,
             round_start_unix=rs,
             round_end_unix=re,
+            is_gather=is_gather,
+            match_winner_raw=match_winner_raw,
+            round1_alpha_side=alpha_side_r1,
+            server_ip=server_ip,
+            server_port=server_port,
             # We also save to the legacy raw_payload for backward compatibility/backup for now
             raw_payload=json.dumps(payloads),
         )
@@ -486,7 +629,16 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             self.crouched_seconds = 0
             self.proned_seconds = 0
             self.leaned_seconds = 0
+            self.in_mg_seconds = 0
+            self.in_sprint_seconds = 0
+            self.in_disguise_seconds = 0
+            self.is_downed_seconds = 0
+            self.shoves_given = 0
+            self.shoves_received = 0
+            self.pickup_medkits = 0
+            self.pickup_ammopacks = 0
             self.classes_played_lists = []
+            self.objectives_list = []
             self.weapons: dict[int, dict] = {}
 
     # Map to accumulate totals across ALL rounds (existing in DB + new in payloads)
@@ -503,9 +655,9 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     # --- CLEAN RE-INGESTION LOGIC ---
     # We always wipe the "Total Score" (round_index=0) as it must be recalculated
     # from the sum of all available rounds (both DB and new payloads).
+    # Clear out all previous statistics for this match (rounds and totals)
     db.query(PlayerMatchStats).filter(
-        PlayerMatchStats.match_id == match_row.id,
-        PlayerMatchStats.round_index == 0
+        PlayerMatchStats.match_id == match_row.id
     ).delete()
 
     # Identify the round indices in the current payloads.
@@ -567,8 +719,19 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         ts.crouched_seconds += row.crouched_seconds
         ts.proned_seconds += row.proned_seconds
         ts.leaned_seconds += row.leaned_seconds
+        ts.in_mg_seconds += row.in_mg_seconds
+        ts.in_sprint_seconds += row.in_sprint_seconds
+        ts.in_disguise_seconds += row.in_disguise_seconds
+        ts.is_downed_seconds += row.is_downed_seconds
+        ts.shoves_given += row.shoves_given
+        ts.shoves_received += row.shoves_received
+        ts.pickup_medkits += row.pickup_medkits
+        ts.pickup_ammopacks += row.pickup_ammopacks
+        
         if row.classes_played_json:
             ts.classes_played_lists.extend(json.loads(row.classes_played_json))
+        if row.objectives_json:
+            ts.objectives_list.extend(json.loads(row.objectives_json))
         ts.time_played_pcts.append(row.time_played_pct)
 
         # Seed prev_unpacked_by_guid for delta calculation
@@ -632,10 +795,15 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         # For simplicity, we assume we want to recalculate totals correctly.
 
     # 2. PROCESS NEW PAYLOADS
+    seen_indices = set()
     for i, body in enumerate(payloads):
         round_info = body.get("round_info") or {}
         # Support both 'round_index' (v2 migration) and 'round' (live Lua script)
         round_index = int(round_info.get("round_index") or round_info.get("round") or (i + 1))
+        while round_index in seen_indices:
+            round_index += 1
+        seen_indices.add(round_index)
+        
         print(f"DEBUG: Processing round index: {round_index}")
         player_stats = body.get("player_stats") or {}
         obituaries = round_info.get("obituaries")
@@ -852,6 +1020,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             crouch = int(stances.get("in_crouch") or 0)
             prone = int(stances.get("in_prone") or 0)
             lean = int(stances.get("in_lean") or 0)
+            mg_time = int(stances.get("in_mg") or 0)
+            sprint_time = int(stances.get("in_sprint") or 0)
+            disguise_time = int(stances.get("in_disguise") or 0)
+            downed_time = int(stances.get("is_downed") or 0)
             
             classes_played = pdata.get("class_switches") or []
             # Robust fallback: if class_switches is missing (new modular Lua scripts), 
@@ -872,6 +1044,19 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                                 })
             
             classes_json = json.dumps(classes_played) if classes_played else None
+
+            # Objective extraction from player_stats maps
+            objs_extracted = []
+            for o_key in ["obj_planted", "obj_defused", "obj_destroyed", "obj_repaired", "obj_taken", "obj_secured", "obj_returned", "obj_carrierkilled", "obj_flagcaptured", "obj_misc", "obj_escort"]:
+                o_map = pdata.get(o_key) or {}
+                for lt, o_data in o_map.items():
+                    objs_extracted.append({
+                        "type": o_key,
+                        "objective": o_data.get("objective") or o_data.get("flag") or "unknown",
+                        "leveltime": int(lt),
+                        "unixtime": int(o_data.get("timestamp_unix") or 0)
+                    })
+            objs_json = json.dumps(objs_extracted) if objs_extracted else None
 
             # Modular v2.x metrics
             spawn_count = int(pdata.get("spawn_count") or 0)
@@ -954,6 +1139,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             r_crouch = _calc_delta(crouch, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_crouch") or 0) if p_prev_pdata else 0)
             r_prone = _calc_delta(prone, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_prone") or 0) if p_prev_pdata else 0)
             r_lean = _calc_delta(lean, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_lean") or 0) if p_prev_pdata else 0)
+            r_mg_seconds = _calc_delta(mg_time, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_mg") or 0) if p_prev_pdata else 0)
+            r_sprint_seconds = _calc_delta(sprint_time, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_sprint") or 0) if p_prev_pdata else 0)
+            r_disguise_seconds = _calc_delta(disguise_time, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("in_disguise") or 0) if p_prev_pdata else 0)
+            r_downed_seconds = _calc_delta(downed_time, int((p_prev_pdata.get("stance_stats_seconds") or {}).get("is_downed") or 0) if p_prev_pdata else 0)
 
             eff_round, kdr_round = _eff_kdr(r_kills, r_combat_deaths)
             u_eff_round = _calculate_unified_eff(r_kills, r_revives, r_dg, r_xp, r_combat_deaths, r_sk)
@@ -992,10 +1181,19 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 crouched_seconds=r_crouch,
                 proned_seconds=r_prone,
                 leaned_seconds=r_lean,
+                in_mg_seconds=r_mg_seconds,
+                in_sprint_seconds=r_sprint_seconds,
+                in_disguise_seconds=r_disguise_seconds,
+                is_downed_seconds=r_downed_seconds,
+                shoves_given=em.shoves_given,
+                shoves_received=em.shoves_received,
+                pickup_medkits=em.pickup_medkits,
+                pickup_ammopacks=em.pickup_ammopacks,
                 classes_played_json=classes_json,
+                objectives_json=objs_json,
                 hs_accuracy_event=hs_acc,
                 nemesis_json=nemesis_to_json(em),
-                weapon_breakdown_json=_weapon_breakdown_json_from_dict({w["slot"]: w for w in round_weapons}) if round_weapons else None,
+                weapon_breakdown_json=json.dumps(round_weapons) if round_weapons else None,
                 name_raw=name_raw,
             )
             db.add(pms_round)
@@ -1004,6 +1202,7 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             if unpacked:
                 unpacked.kills = kills_raw
                 unpacked.deaths = deaths_all_raw
+                unpacked.pdata_ref = pdata # Store the whole dict for next round's stance/dist deltas
                 unpacked.self_kills = sk_raw
                 unpacked.revives = revives
                 unpacked.medkits = medkits
@@ -1040,35 +1239,22 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             ts.headshot_hits += em.headshot_hits
             ts.shots_recorded += em.shots_recorded
 
+            ts.in_mg_seconds += r_mg_seconds
+            ts.in_sprint_seconds += r_sprint_seconds
+            ts.in_disguise_seconds += r_disguise_seconds
+            ts.is_downed_seconds += r_downed_seconds
+            ts.shoves_given += em.shoves_given
+            ts.shoves_received += em.shoves_received
+            ts.pickup_medkits += em.pickup_medkits
+            ts.pickup_ammopacks += em.pickup_ammopacks
+
             ts.spam_kills += spam_kills
-            if classes_played:
-                ts.classes_played_lists.extend(classes_played)
+            ts.classes_played_lists.extend(classes_played)
+            ts.objectives_list.extend(objs_extracted)
             ts.time_played_pcts.append(tpct)
 
-    # 3. RE-DETERMINE WINNER based on all rounds
-    # We must map the winner_team to the "Pinned" identity.
-    # If the winner of the final round was the same physical team that was Axis in Round 1,
-    # then their pinned identity is 1. If they were Allies in Round 1, their identity is 2.
-    if len(payloads) > 0 and winner_team in (1, 2):
-        # Correct Winner Re-mapping using a majority vote
-        final_player_stats = payloads[-1].get("player_stats", {})
-        votes = {1: 0, 2: 0} # Pinned Alpha=1, Beta=2
-        
-        for g, pdata in final_player_stats.items():
-            if int(pdata.get("team") or 0) == winner_team:
-                pg = g.strip().upper()
-                pg = aliases.get(pg, pg)
-                pinned_team = first_team_by_guid.get(pg)
-                if pinned_team in (1, 2):
-                    votes[pinned_team] += 1
-
-        if votes[1] > votes[2]:
-            match_row.winner_team = 1 # Alpha
-        elif votes[2] > votes[1]:
-            match_row.winner_team = 2 # Beta
-        else:
-            # Tie-breaker or fallback to raw winner index
-            match_row.winner_team = winner_team
+    # 3. WINNER is already determined and persisted at the start of ingest_match_payloads.
+    # No further re-determination is needed here.
 
     # Insert totals
     performances: list[PlayerPerformance] = []
@@ -1140,18 +1326,8 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         
         weapon_acc = (total_hits / total_shots * 100.0) if total_shots > 0 else 0.0
 
-        # Determine if primarily a medic (>50% time)
-        is_medic = False
-        if ts.classes_played_json:
-            try:
-                classes = json.loads(ts.classes_played_json)
-                # Class 1 is Medic in ET
-                medic_time = classes.get("1", 0)
-                total_time = sum(classes.values())
-                if total_time > 0 and (medic_time / total_time) > 0.5:
-                    is_medic = True
-            except:
-                pass
+        # Determine if primarily a medic (played Medic in any round)
+        is_medic = any(str(c.get("toClass")) == "1" for c in ts.classes_played_lists)
 
         performances.append(
             PlayerPerformance(
@@ -1278,6 +1454,32 @@ def recalculate_all_ratings(db: Session):
             m.round1_duration = d1
             m.round2_duration = d2
 
+        # Engine Team ID -> Pinned Team ID mapping for this match.
+        # Historically, we hardcoded {1:1, 2:2}, which flipped 50% of matches.
+        # Now we use the round1_alpha_side metadata to correctly map.
+        engine_to_pinned = {1: 1, 2: 2} # Default
+        if payload_rows:
+            p1 = json.loads(payload_rows[0].payload)
+            p1_stats = p1.get("player_stats") or {}
+            if p1_stats:
+                # Sample one player to see their engine side
+                sample_guid = next(iter(p1_stats))
+                sample_pdata = p1_stats[sample_guid]
+                engine_team = int(sample_pdata.get("team") or 0)
+                engine_side = int(sample_pdata.get("side") or 0) # 1=Axis, 2=Allies
+                
+                if engine_team in (1, 2) and engine_side in (1, 2):
+                    # We know this player's Engine Team and their Side in R1.
+                    # We also know Alpha's Side in R1.
+                    alpha_side_r1 = m.round1_alpha_side or 1 # Assume Alpha=Axis if missing
+                    
+                    if engine_side == alpha_side_r1:
+                        # This Engine Team was Alpha
+                        engine_to_pinned = {engine_team: 1, (3 - engine_team): 2}
+                    else:
+                        # This Engine Team was Beta
+                        engine_to_pinned = {engine_team: 2, (3 - engine_team): 1}
+
         performances = []
         for row in stats_rows:
             gr = db.query(PlayerGatherRating).filter(PlayerGatherRating.player_id == row.player_id).one_or_none()
@@ -1286,14 +1488,13 @@ def recalculate_all_ratings(db: Session):
                 db.add(gr)
                 db.flush()
             
-            # Weapon accuracy logic (extracted from ingest_match_payloads)
+            # Weapon accuracy logic
             core_weapon_slots = {2, 3, 4, 5, 6, 7, 22, 23, 24, 25, 26}
             total_hits = 0
             total_shots = 0
             if row.weapon_breakdown_json:
                 try:
                     wb = json.loads(row.weapon_breakdown_json)
-                    # Support both list (unpacked) and dict (aggregated) formats
                     if isinstance(wb, list):
                         for w in wb:
                             if w.get("slot") in core_weapon_slots:
@@ -1306,11 +1507,10 @@ def recalculate_all_ratings(db: Session):
                                 total_shots += w.get("shots", 0)
                 except:
                     pass
-            weapon_acc = (total_hits / total_shots * 100.0) if total_shots > 0 else 0.0
-
+            
             performances.append(PlayerPerformance(
                 player_id=row.player_id,
-                team=row.team,
+                team=row.team, # Engine Team (1 or 2)
                 xp=float(row.xp),
                 kills=row.kills,
                 damage_given=row.damage_given,
@@ -1320,6 +1520,16 @@ def recalculate_all_ratings(db: Session):
                 mu=gr.mu,
                 sigma=gr.sigma
             ))
+
+        # Re-map the derived_winner (Engine) to Pinned (Alpha/Beta)
+        # If derived_winner is Engine Team 1, and Engine Team 1 is Alpha, then final_winner is 1.
+        final_winner = engine_to_pinned.get(derived_winner, derived_winner)
+        
+        # Persist corrected winner and durations
+        if final_winner != m.winner_team or d1 != m.round1_duration or d2 != m.round2_duration:
+            m.winner_team = final_winner
+            m.round1_duration = d1
+            m.round2_duration = d2
 
         rating_results = calculate_openskill_ratings(performances, derived_winner)
 
@@ -1346,6 +1556,6 @@ def recalculate_all_ratings(db: Session):
             )
             db.add(hist)
         
-        db.flush()
+        db.commit() # Commit after each match to avoid long transaction locks
     
-    db.commit()
+    print(f"Global rating recalculation complete for {len(matches)} matches.")
