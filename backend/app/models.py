@@ -60,6 +60,7 @@ class Player(Base):
     guid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     raw_name_last: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    name_locked: Mapped[int] = mapped_column(Integer, default=0) # 0=no, 1=yes
 
     match_stats: Mapped[list["PlayerMatchStats"]] = relationship(
         "PlayerMatchStats", back_populates="player"

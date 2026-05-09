@@ -230,11 +230,9 @@ def match_detail(match_db_id: int, db: Session = Depends(get_db)) -> MatchDetail
             best_score = score
             mvp = pl
 
-    # Resolve Alpha/Beta side metadata
-    # The rule is: Alpha started as Axis (Team 1) in Round 1, Beta as Allies (Team 2).
-    # This is consistent for all matches to ensure stable history reconstruction.
-    r1_alpha_side = 1 # Axis
-    r2_alpha_side = 2 # Allies
+    # Resolve Alpha/Beta side metadata from DB or use defaults
+    r1_alpha_side = m.round1_alpha_side if m.round1_alpha_side is not None else 1
+    r2_alpha_side = m.round2_alpha_side if m.round2_alpha_side is not None else 2
 
     return MatchDetailOut(
         match=MatchSummaryOut(

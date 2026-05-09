@@ -372,22 +372,26 @@ export function MatchDetail() {
                match.winner_team === 2 ? 'Beta Win' : 'Draw Match'}
             </div>
               {duration && <span className="text-zinc-400 font-mono bg-zinc-800/80 px-2 py-1 rounded">{duration}</span>}
-              {(match.round1_duration || match.round2_duration) && (
-                <div className="flex items-center gap-2 text-zinc-500 font-mono text-xs bg-zinc-900/50 px-2.5 py-1 rounded border border-zinc-800">
-                  <span className="text-zinc-600 uppercase text-[9px] font-bold tracking-tighter mr-1">Set Times</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[10px] font-bold ${match.round1_duration && match.round2_duration && match.round1_duration < match.round2_duration ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                      <span className="opacity-50 mr-0.5">β:</span>
-                      {match.round1_duration ? `${Math.floor(match.round1_duration/60)}:${String(match.round1_duration%60).padStart(2,'0')}` : '—'}
-                    </span>
-                    <span className="opacity-30">/</span>
-                    <span className={`text-[10px] font-bold ${match.round1_duration && match.round2_duration && match.round2_duration < match.round1_duration ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                      <span className="opacity-50 mr-0.5">α:</span>
-                      {match.round2_duration ? `${Math.floor(match.round2_duration/60)}:${String(match.round2_duration%60).padStart(2,'0')}` : '—'}
-                    </span>
+              {(match.round1_duration || match.round2_duration) && (() => {
+                const alphaTime = r1_alpha_side === 2 ? match.round1_duration : match.round2_duration
+                const betaTime = r1_alpha_side === 1 ? match.round1_duration : match.round2_duration
+                return (
+                  <div className="flex items-center gap-2 text-zinc-500 font-mono text-xs bg-zinc-900/50 px-2.5 py-1 rounded border border-zinc-800">
+                    <span className="text-zinc-600 uppercase text-[9px] font-bold tracking-tighter mr-1">Set Times</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] font-bold ${alphaTime && betaTime && alphaTime < betaTime ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                        <span className="opacity-50 mr-0.5">α:</span>
+                        {alphaTime ? `${Math.floor(alphaTime/60)}:${String(alphaTime%60).padStart(2,'0')}` : '—'}
+                      </span>
+                      <span className="opacity-30">/</span>
+                      <span className={`text-[10px] font-bold ${alphaTime && betaTime && betaTime < alphaTime ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                        <span className="opacity-50 mr-0.5">β:</span>
+                        {betaTime ? `${Math.floor(betaTime/60)}:${String(betaTime%60).padStart(2,'0')}` : '—'}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
               {matchDate && <span className="text-zinc-500 font-mono text-xs">{matchDate}</span>}
             </div>
           </div>

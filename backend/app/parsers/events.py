@@ -32,6 +32,10 @@ class EventMetrics:
     team_medpacks: int = 0
     team_ammopacks: int = 0
     revives: int = 0
+    shoves_given: int = 0
+    shoves_received: int = 0
+    pickup_medkits: int = 0   # Medkits of this player picked up by others
+    pickup_ammopacks: int = 0 # Ammopacks of this player picked up by others
     nemesis_kills: dict[str, int] = field(default_factory=dict)
     nemesis_deaths: dict[str, int] = field(default_factory=dict)
 
@@ -196,6 +200,24 @@ def compute_event_metrics(
                 p_guid = _get_master(str(ev.get("player") or ""))
                 if _same_player(p_guid, pg):
                     m.team_ammopacks += 1
+
+            elif label == "pickup":
+                # Attributing support packs picked up by others
+                owner = _get_master(str(ev.get("owner") or ""))
+                item = ev.get("item", "")
+                if _same_player(owner, pg):
+                    if item in ("item_health", "weapon_medkit"):
+                        m.pickup_medkits += 1
+                    elif item in ("weapon_magicammo", "weapon_ammo"):
+                        m.pickup_ammopacks += 1
+            
+            elif label == "shove":
+                shover = _get_master(str(ev.get("player") or ""))
+                shoved = _get_master(str(ev.get("victim") or ""))
+                if _same_player(shover, pg):
+                    m.shoves_given += 1
+                if _same_player(shoved, pg):
+                    m.shoves_received += 1
 
     return m
 

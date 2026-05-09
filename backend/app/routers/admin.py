@@ -2,7 +2,7 @@ import os
 import glob
 import json
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
@@ -230,8 +230,7 @@ def get_match_raw(match_db_id: int, db: Session = Depends(get_db)):
         return {"raw": m.raw_payload}
 
 
-@router.post("/migrate")
-def run_db_migrations(db: Session = Depends(get_db)):
+def run_db_migrations(db: Session):
     """
     Applies missing database columns and indexes.
     This effectively allows self-healing schema updates without manual SQL access.
@@ -266,9 +265,28 @@ def run_db_migrations(db: Session = Depends(get_db)):
                     print(f"DEBUG: Error adding index {idx_name}: {e}")
 
         add_col("matches", "raw_payload", "TEXT")
+        add_col("matches", "round1_duration", "INTEGER")
+        add_col("matches", "round2_duration", "INTEGER")
+        add_col("matches", "is_gather", "INTEGER DEFAULT 0")
+        add_col("matches", "match_winner_raw", "VARCHAR(16)")
+        add_col("matches", "server_ip", "VARCHAR(64)")
+        add_col("matches", "server_port", "INTEGER")
+        add_col("matches", "round1_alpha_side", "INTEGER")
+        add_col("matches", "round2_alpha_side", "INTEGER")
+        add_col("players", "name_locked", "INTEGER DEFAULT 0")
+
         add_col("player_match_stats", "unified_eff", "FLOAT DEFAULT 0.0")
         add_col("player_match_stats", "medkits", "INTEGER DEFAULT 0")
         add_col("player_match_stats", "team_deaths_received", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "pickup_medkits", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "pickup_ammopacks", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "shoves_given", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "shoves_received", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "in_mg_seconds", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "in_sprint_seconds", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "in_disguise_seconds", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "is_downed_seconds", "INTEGER DEFAULT 0")
+        add_col("player_match_stats", "objectives_json", "TEXT")
         
         # Performance Indexes
         add_idx("matches", "round_start_unix")
@@ -280,6 +298,11 @@ def run_db_migrations(db: Session = Depends(get_db)):
         return {"status": "ok", "message": "Database schema migration and indexing complete."}
     except Exception as e:
         return {"status": "error", "message": f"Migration failed: {str(e)}"}
+
+
+@router.post("/migrate")
+def migrate_endpoint(db: Session = Depends(get_db)):
+    return run_db_migrations(db)
 
 
 @router.post("/migrate-payloads")
@@ -593,6 +616,33 @@ def update_aliases(data: List[dict]):
     return {"status": "ok"}
 
 
+@router.get("/ghost-boosts")
+def get_ghost_boosts() -> Dict[str, float]:
+    mapping_path = "/app/data/ghost_boosts.json"
+    if not os.path.exists(mapping_path):
+        data_dir = os.path.join(os.getcwd(), "data")
+        mapping_path = os.path.join(data_dir, "ghost_boosts.json")
+        if not os.path.exists(mapping_path):
+             mapping_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ghost_boosts.json")
+
+    if not os.path.exists(mapping_path):
+        return {}
+    with open(mapping_path, "r") as f:
+        return json.load(f)
+
+
+@router.post("/ghost-boosts")
+def update_ghost_boosts(data: Dict[str, float]):
+    mapping_path = "/app/data/ghost_boosts.json"
+    if not os.path.exists("/app/data"):
+        os.makedirs(os.path.join(os.getcwd(), "data"), exist_ok=True)
+        mapping_path = os.path.join(os.getcwd(), "data", "ghost_boosts.json")
+
+    with open(mapping_path, "w") as f:
+        json.dump(data, f, indent=2)
+    return {"status": "ok"}
+
+
 class PlayerNameUpdate(BaseModel):
     display_name: str
 
@@ -609,5 +659,6 @@ def update_player_display_name(guid: str, body: PlayerNameUpdate, db: Session = 
         raise HTTPException(status_code=404, detail="Player not found")
     
     player.display_name = body.display_name
+    player.name_locked = 1
     db.commit()
     return {"status": "ok", "guid": guid, "new_name": body.display_name}

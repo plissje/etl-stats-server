@@ -12,6 +12,17 @@ from app.routers.admin import run_consolidation
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    # Automatically apply schema migrations on every startup.
+    db = SessionLocal()
+    try:
+        from app.routers.admin import run_db_migrations
+        result = run_db_migrations(db)
+        print(f"[Startup] Database migration: {result.get('message')}")
+    except Exception as e:
+        print(f"[Startup] Database migration warning: {e}")
+    finally:
+        db.close()
+
     # Automatically merge any alias player records into their master on every startup.
     # This is idempotent — if the DB is already clean it does nothing.
     db = SessionLocal()
@@ -27,7 +38,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="ET:Legacy Stats Server", 
-    version="v2026.4.20.1", 
+    version="v2026.5.4.1", 
     lifespan=lifespan,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json"

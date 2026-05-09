@@ -11,7 +11,8 @@ echo "🛑 Shutting down containers on Unraid..."
 ssh "$USER_HOST" "
   docker stop etl-stats-frontend etl-stats-backend 2>/dev/null || true
   docker rm etl-stats-frontend etl-stats-backend 2>/dev/null || true
-  docker rmi etl-stats-server-frontend etl-stats-server-backend 2>/dev/null || true
+  # Using wildcards to catch both hyphen and underscore naming conventions
+  docker rmi \$(docker images 'etl-stats-server*' -q) 2>/dev/null || true
 "
 
 echo "🚀 Starting optimized sync to Unraid..."
@@ -30,8 +31,7 @@ rsync -avz --delete \
   "$SOURCE_DIR" "$USER_HOST:$DESTINATION_PATH"
 
 echo "🚀 Restarting stack via Dockge..."
-# This will trigger a fresh build because we deleted the old images in step 1
-# We exec into the dockge container itself since the host is missing the compose binary
-ssh "$USER_HOST" "docker exec dockge docker compose -f $DESTINATION_PATH/compose.yaml up -d"
+# Force rebuild and recreation to ensure new code is live
+ssh "$USER_HOST" "docker exec dockge docker compose -f $DESTINATION_PATH/compose.yaml up -d --build --force-recreate"
 
 echo "✅ Deployment complete! The stack is now running."

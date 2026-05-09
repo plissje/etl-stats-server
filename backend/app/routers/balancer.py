@@ -45,6 +45,16 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
     guids = [p.guid for p in req.players]
     ratings_map, roles_map = get_player_ratings_and_roles(db, guids)
     
+    from app.routers.admin import get_ghost_boosts
+    
+    # --- TEMPORARY BALANCER BOOSTS ---
+    # Used for strong players who don't have enough games to reflect their true SR.
+    # This boost only affects team balancing, not the public leaderboard.
+    try:
+        GHOST_BOOSTS = get_ghost_boosts()
+    except Exception:
+        GHOST_BOOSTS = {}
+
     # Process each player from the request, prioritizing the provided name
     team_players = []
     for p in req.players:
@@ -52,6 +62,9 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
         # Check rating: Try GUID first, default 1500.0
         rating = ratings_map.get(guid_upper, 1500.0)
         role = roles_map.get(guid_upper, "Unknown")
+        
+        if guid_upper in GHOST_BOOSTS:
+            rating += GHOST_BOOSTS[guid_upper]
         
         team_players.append(TeamPlayer(
             guid=p.guid,
@@ -112,7 +125,7 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
         # Generate 20 randomized drafts to ensure variety, then pick the most balanced one
         best_diff = float('inf')
         alpha, beta = [], []
-        for _ in range(25):
+        for _ in range(10):
             cand_a, cand_b = get_split(noise=settings.balancer_noise)
             
             a_avg = sum(p.rating for p in cand_a) / len(cand_a) if cand_a else 0

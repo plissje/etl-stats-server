@@ -178,7 +178,11 @@ def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int |
         w1 = int(r1.get("winnerteam") or 0)
         w2 = int(r2.get("winnerteam") or 0)
         
-        # Duration calculation
+        # Duration calculation (preferring millisecond precision if available)
+        r1_ms = int(r1.get("round_end") or 0) - int(r1.get("round_start") or 0)
+        r2_ms = int(r2.get("round_end") or 0) - int(r2.get("round_start") or 0)
+        
+        # Fallback to unix seconds for display-only fields in the DB 
         d1 = int(r1.get("round_end_unix") or 0) - int(r1.get("round_start_unix") or 0)
         d2 = int(r2.get("round_end_unix") or 0) - int(r2.get("round_start_unix") or 0)
 
@@ -190,10 +194,17 @@ def _determine_winner_team(payloads: list[dict]) -> tuple[int, int | None, int |
                 winner = w1
             else:
                 # Same engine side won both rounds (e.g., both won as Allies).
-                # This happens if both teams completed the objective. The faster one wins.
-                if d1 < d2: winner = w1
-                elif d2 < d1: winner = 3 - w1
-                else: winner = 0 # True draw (identical times)
+                defender_et = int(r1.get("defenderteam") or 1)
+                if w1 == defender_et:
+                    # Double full hold (both teams won as defenders)
+                    winner = 0 # True draw
+                    # Normalize durations for display consistency if it's a full hold
+                    d1 = d2 = max(d1, d2) if (d1 and d2) else d1
+                else:
+                    # Both teams completed the objective. The faster one wins.
+                    if r1_ms < r2_ms: winner = w1
+                    elif r2_ms < r1_ms: winner = 3 - w1
+                    else: winner = 0 # True draw (identical times)
         elif w1 > 0: winner = w1
         elif w2 > 0: winner = w2
         
@@ -844,8 +855,9 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     db.add(player)
                     db.flush()
                 else:
-                    # Update with cleaned name unless it's empty
-                    player.display_name = display_normalized or player.display_name
+                    # Update with cleaned name unless it's empty OR name is locked
+                    if not player.name_locked:
+                        player.display_name = display_normalized or player.display_name
                     player.raw_name_last = name_raw or player.raw_name_last
                 player_db_by_guid[guid] = player
             else:
@@ -862,17 +874,20 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                     existing_alias.last_seen = datetime.utcnow()
 
             # Determine match-wide team identity
-            # We prioritize the current round's team from player_stats
-            # but fall back to the generic map if needed.
+            # If they join in Round 2, their Engine Team is inverted relative to Round 1.
+            effective_team_r1 = team
+            if team in (1, 2) and round_index % 2 == 0:
+                effective_team_r1 = 3 - team
+
             if guid not in total_stats_by_guid:
                 total_stats_by_guid[guid] = TotalStat(name_raw, display, team)
                 if team in (1, 2):
-                    first_team_by_guid[guid] = team
+                    first_team_by_guid[guid] = effective_team_r1
             else:
                 # Record the first team they joined in this match (usually Round 1)
                 # to keep the "Total Score" view consistent after side-swaps.
                 if guid not in first_team_by_guid and team in (1, 2):
-                    first_team_by_guid[guid] = team
+                    first_team_by_guid[guid] = effective_team_r1
             
             ts = total_stats_by_guid[guid]
             # --- EXTRACT METRICS (Protocol Dependent) ---

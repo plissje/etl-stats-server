@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     rcon_port: int = 27960
     rcon_password: str = "dev-rcon-password"
 
-    balancer_dampening_threshold: float = 3000.0
+    balancer_dampening_threshold: float = 3500.0
     balancer_dampening_factor: float = 0.5
     balancer_noise: float = 150.0
 
