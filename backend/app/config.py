@@ -29,5 +29,6 @@ class Settings(BaseSettings):
     balancer_dampening_threshold: float = 3500.0
     balancer_dampening_factor: float = 0.5
     balancer_noise: float = 150.0
+    balancer_max_diff: float = 350.0
 
 settings = Settings()

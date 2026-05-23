@@ -122,20 +122,55 @@ def balance_teams(req: BalanceRequest, db: Session = Depends(get_db)):
         return a, b
 
     if req.variations:
-        # Generate 20 randomized drafts to ensure variety, then pick the most balanced one
-        best_diff = float('inf')
-        alpha, beta = [], []
-        for _ in range(10):
+        # 1. Identify previous team setup to prevent identical partitions
+        prev_axis = {p.guid.upper() for p in team_players if p.origin_team == 'Axis'}
+        prev_allies = {p.guid.upper() for p in team_players if p.origin_team == 'Allies'}
+        has_prev_setup = len(prev_axis) > 0 or len(prev_allies) > 0
+
+        # 2. Generate 50 candidate splits with random SR noise
+        candidates = []
+        for _ in range(50):
             cand_a, cand_b = get_split(noise=settings.balancer_noise)
             
             a_avg = sum(p.rating for p in cand_a) / len(cand_a) if cand_a else 0
             b_avg = sum(p.rating for p in cand_b) / len(cand_b) if cand_b else 0
             diff = abs(a_avg - b_avg)
             
-            if diff < best_diff:
-                best_diff = diff
-                alpha, beta = cand_a, cand_b
+            # Check similarity
+            cand_a_guids = {p.guid.upper() for p in cand_a}
+            cand_b_guids = {p.guid.upper() for p in cand_b}
+            is_identical = False
+            if has_prev_setup:
+                is_identical = (
+                    (cand_a_guids == prev_axis and cand_b_guids == prev_allies) or
+                    (cand_a_guids == prev_allies and cand_b_guids == prev_axis)
+                )
                 
+            candidates.append({
+                "alpha": cand_a,
+                "beta": cand_b,
+                "diff": diff,
+                "is_identical": is_identical
+            })
+            
+        # 3. Filter out identical combinations if other options exist
+        non_identical = [c for c in candidates if not c["is_identical"]]
+        pool = non_identical if non_identical else candidates
+        
+        # 4. Filter into pools based on our target max SR diff constraint
+        acceptable = [c for c in pool if c["diff"] <= settings.balancer_max_diff]
+        
+        # 5. Select the final combination from the top 3 best variations in the appropriate pool
+        if acceptable:
+            acceptable.sort(key=lambda x: x["diff"])
+            best_pool = acceptable[:min(3, len(acceptable))]
+        else:
+            pool.sort(key=lambda x: x["diff"])
+            best_pool = pool[:min(3, len(pool))]
+            
+        selected = random.choice(best_pool)
+        alpha, beta = selected["alpha"], selected["beta"]
+        
         # 50% chance to swap Axis and Allies for even more variety
         if random.random() > 0.5:
             alpha, beta = beta, alpha

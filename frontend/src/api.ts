@@ -186,7 +186,7 @@ export async function fetchStatsOverview(): Promise<StatsOverview> {
 
 export type LeaderboardEntry = { guid: string; display_name: string; raw_name?: string; val: number; main_role?: string }
 export type PlayerSearchResults = { players: LeaderboardEntry[]; total: number }
-export type PlayerIdentifier = { guid: string; name: string; slot?: number }
+export type PlayerIdentifier = { guid: string; name: string; slot?: number; team?: string }
 export type Leaderboards = {
   openskill: LeaderboardEntry[]
   medic: LeaderboardEntry[]

@@ -74,7 +74,16 @@ export function Balancing() {
         : selectedPlayers
         
     const allPlayers: PlayerIdentifier[] = [
-        ...activeSelected.map(p => ({ guid: p.id, name: p.name, slot: p.slot })),
+        ...activeSelected.map(p => {
+          let prevTeam = p.team
+          if (lastBalance) {
+            const inAlpha = lastBalance.alpha.some(ap => ap.guid === p.id)
+            const inBeta = lastBalance.beta.some(bp => bp.guid === p.id)
+            if (inAlpha) prevTeam = 'Axis'
+            else if (inBeta) prevTeam = 'Allies'
+          }
+          return { guid: p.id, name: p.name, slot: p.slot, team: prevTeam }
+        }),
         ...manualLines.map(line => ({ guid: line, name: line }))
     ]
     

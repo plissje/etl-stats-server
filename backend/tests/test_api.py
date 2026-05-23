@@ -52,3 +52,52 @@ def test_submit_sample_simple(client):
     prof = client.get(f"/api/players/{g}").json()
     assert prof["guid"]
     assert "current_rating" in prof
+
+
+def test_balance_teams(client):
+    req_body = {
+        "players": [
+            {"guid": "GUID_A", "name": "Player A", "team": "Axis"},
+            {"guid": "GUID_B", "name": "Player B", "team": "Axis"},
+            {"guid": "GUID_C", "name": "Player C", "team": "Allies"},
+            {"guid": "GUID_D", "name": "Player D", "team": "Allies"},
+        ],
+        "variations": False
+    }
+    
+    # Test deterministic balance
+    r = client.post("/api/balancer/balance", json=req_body)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert "alpha" in res
+    assert "beta" in res
+    assert "diff" in res
+    assert len(res["alpha"]) == 2
+    assert len(res["beta"]) == 2
+    
+    # Test variations balance (reshuffle) with memory feedback
+    req_body_var = {
+        "players": [
+            {"guid": "GUID_A", "name": "Player A", "team": "Axis"},
+            {"guid": "GUID_B", "name": "Player B", "team": "Axis"},
+            {"guid": "GUID_C", "name": "Player C", "team": "Allies"},
+            {"guid": "GUID_D", "name": "Player D", "team": "Allies"},
+        ],
+        "variations": True
+    }
+    
+    r_var = client.post("/api/balancer/balance", json=req_body_var)
+    assert r_var.status_code == 200, r_var.text
+    res_var = r_var.json()
+    
+    # Get the resulting guid sets
+    alpha_guids = {p["guid"] for p in res_var["alpha"]}
+    beta_guids = {p["guid"] for p in res_var["beta"]}
+    
+    # Check that it's NOT (A, B) and (C, D)
+    is_same = (
+        (alpha_guids == {"GUID_A", "GUID_B"} and beta_guids == {"GUID_C", "GUID_D"}) or
+        (alpha_guids == {"GUID_C", "GUID_D"} and beta_guids == {"GUID_A", "GUID_B"})
+    )
+    assert not is_same, "Reshuffle should have avoided the identical partition!"
+
