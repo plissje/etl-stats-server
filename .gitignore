@@ -19,4 +19,3 @@ htmlcov/
 .DS_Store
 .services.pid
 backend/backend.log
-refs/gamestats/
