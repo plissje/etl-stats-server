@@ -1,9 +1,13 @@
-# 🖥️ Antigravity Project Rules — etl-stats-server
+# 🖥️ Coding Rules & Standards — etl-stats-server
 
-## 🏗️ Project Essence
-A full-stack stats & skill-rating platform for competitive ET: Legacy gathers. It tracks match data, computes Skill Rating (SR) via OpenSkill (PlackettLuce), and powers a team balancer to generate fair, competitive matchups.
+A full-stack stats & skill-rating platform for competitive ET: Legacy gathers. Tracks match data, computes SR via OpenSkill (PlackettLuce), and powers a team balancer for fair matchups.
 
-## 💻 Tech Stack
+> See **workflow.md** for dev process, deployment, and hygiene rules.
+> See **et_rules.md** for ET game mechanics, role classifications, and balancer logic.
+
+---
+
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -19,7 +23,7 @@ A full-stack stats & skill-rating platform for competitive ET: Legacy gathers. I
 
 ---
 
-## 🧱 General Principles
+## General Principles
 
 1. **No overengineering**: Add complexity only when the problem explicitly requires it.
 2. **Explicit over implicit**: Name variables, functions, and models clearly; avoid single-letter variables except in tight, localized loops.
@@ -29,7 +33,7 @@ A full-stack stats & skill-rating platform for competitive ET: Legacy gathers. I
 
 ---
 
-## 🐍 Backend Rules (Python / FastAPI)
+## Backend Rules (Python / FastAPI)
 
 ### Project Structure
 ```
@@ -89,7 +93,7 @@ backend/app/
 
 ---
 
-## ⚛️ Frontend Rules (TypeScript / React / Tailwind)
+## Frontend Rules (TypeScript / React / Tailwind)
 
 ### Project Structure
 ```
@@ -129,65 +133,23 @@ frontend/src/
 
 ---
 
-## 🔄 Development Workflow
+## Environment & Secrets
 
-### Verification & Deployment
-- **Never deploy automatically**: Never run `deploy_unraid.sh` or trigger deployments automatically.
-- **Present & Verify First**: Always present code/design changes to the user first.
-- **Wait for Approval**: Wait for explicit user validation before marking a task complete or ready for deployment.
-
-### Database Debugging
-- The local SQLite DB (`etl_stats.db` / `stats.db`) is generally useless for testing real-world data.
-- To debug real ingestion issues, use the staging/production instance at `etl-stats.maryan.io` and/or SSH to Unraid.
-- **Permitted local exception**: You may copy the production DB locally into `scratch/` for dry-run analytics.
-
-### Scratch Files & Hygiene
-- Always use the root-level `scratch/` folder for temporary scripts, debug files, or DB dumps.
-- Never create temp/test scripts in the repo root or within `backend/` / `frontend/`.
-- **Clean up after resolution**: Delete all scratch scripts and transient test data once the task is resolved.
-
-### Test-Driven Process
-- When fixing bugs or updating features, update the corresponding test suite.
-- Always run tests when core features are modified **before** presenting results to the user.
-- **Run tests**: `PYTHONPATH=. .venv/bin/pytest tests/` from the `backend/` directory.
-
-### Communication Standard
-- Provide concise summaries highlighting **core reasoning** and key files changed.
-- No walls of text. Find a healthy balance of critical context, key logic shifts, and next steps.
+- All configuration lives in `backend/.env` (gitignored). See `.env.example` for keys.
+- Access env vars only via `app.config.settings` (pydantic-settings); never `os.environ` directly.
+- `store_raw`: set to `False` in production to avoid storing full payloads.
 
 ---
 
-## 🎮 Enemy Territory Mechanics & Balancer Rules
+## Git & Commit Conventions
 
-### Stopwatch Game Mechanics
-Gathers are played under **Stopwatch** rules — two rounds on the same map, teams swap sides.
-
-- **Axis**: Always the **defender** by default on our maps.
-- **Allies**: Always the **attacker** (trying to complete objectives within the time limit).
-- **Round 1**: Allies attempt to complete the map objective. If they succeed, a stopwatch time is set. If not, it's a fullhold.
-- **Round 2**: Teams swap. Allies must beat the Round 1 time (or complete within the map limit if fullhold).
-- **Double Fullhold → Draw**: If Axis defends successfully in both rounds, the match is parsed as a **Draw**.
-
-### Character Classes & Core Roles
-Only three classes are **Core** for gathers:
-1. **Medic**: Team survival, healing, revives.
-2. **Field Ops**: Ammo distribution, artillery/airstrikes.
-3. **Engineer**: The most objective-critical class. **All maps require an Engineer.**
-
-### Engineer Division (Critical for Balancer)
-Engineers are split into two distinct types that **must never be mixed** in balancer logic:
-
-1. **Rifle Engineer** (Primary): Grenade-launching rifle (Garand/K43). The critical engineering role — must be balanced across teams.
-2. **SMG Engineer** (Secondary): Submachine gun (Thompson/MP40). Handles specific build phases. Must be tracked separately — two SMG engineers ≠ one Rifle Engineer.
-
-### SR & Balancer Objective
-- All SR tracking and ratings calculations exist to serve the **team balancer**.
-- When adjusting ratings or balancer algorithms, preserve core role preferences (Medic and Rifle Engineer) to generate highly competitive, balanced matchups.
-- The SR delta between teams should be minimized when generating balanced team assignments.
+- Use imperative present tense: `Add`, `Fix`, `Remove`, `Refactor`.
+- Keep changes atomic: one logical change per commit.
+- Do not commit `.env`, `*.db`, `__pycache__`, `.venv`, `node_modules`, `dist`.
 
 ---
 
-## 🚫 Things to Never Do
+## Things to Never Do
 
 - **Never deploy automatically** without presenting changes and waiting for manual user verification.
 - **Never create scratch scripts** in the repo root or `backend/` / `frontend/` — use `scratch/`.
@@ -201,26 +163,10 @@ Engineers are split into two distinct types that **must never be mixed** in bala
 
 ---
 
-## 🚀 Deployment & Live Environment (Unraid)
+## Deployment & Live Environment (Unraid)
 
 - **Production Host**: Runs on Unraid (`unraid.local.maryan.io` / `10.0.0.200`), managed via **Dockge**.
 - **Deployment**: Run `./deploy_unraid.sh` from the PC (manually, after user approval).
 - **Dockge Web UI**: `http://10.0.0.200:5001`
 - **Live Logs**: `ssh root@unraid "docker logs -f etl-stats-server"`
 - **Interactive Terminal**: `ssh root@unraid "docker exec -it etl-stats-server sh"`
-
----
-
-## 🔑 Environment & Secrets
-
-- All configuration lives in `backend/.env` (gitignored). See `.env.example` for keys.
-- Access env vars only via `app.config.settings` (pydantic-settings); never `os.environ` directly.
-- `store_raw`: set to `False` in production to avoid storing full payloads.
-
----
-
-## 📝 Git & Commit Conventions
-
-- Use imperative present tense: `Add`, `Fix`, `Remove`, `Refactor`.
-- Keep changes atomic: one logical change per commit.
-- Do not commit `.env`, `*.db`, `__pycache__`, `.venv`, `node_modules`, `dist`.
