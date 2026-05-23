@@ -3,12 +3,12 @@ from app.rating import PlayerPerformance, calculate_openskill_ratings
 def test_openskill_convergence():
     # 3v3 match
     perf = [
-        PlayerPerformance(player_id=1, team=1, xp=2000, mu=25.0, sigma=8.333),
-        PlayerPerformance(player_id=2, team=1, xp=1500, mu=25.0, sigma=8.333),
-        PlayerPerformance(player_id=3, team=1, xp=1000, mu=25.0, sigma=8.333),
-        PlayerPerformance(player_id=4, team=2, xp=2000, mu=25.0, sigma=8.333),
-        PlayerPerformance(player_id=5, team=2, xp=1500, mu=25.0, sigma=8.333),
-        PlayerPerformance(player_id=6, team=2, xp=1000, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=1, team=1, xp=2000, kills=30, damage_given=3000, revives=5, deaths=5, self_kills=0, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=2, team=1, xp=1500, kills=20, damage_given=2000, revives=3, deaths=8, self_kills=0, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=3, team=1, xp=1000, kills=10, damage_given=1000, revives=1, deaths=12, self_kills=0, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=4, team=2, xp=2000, kills=30, damage_given=3000, revives=5, deaths=5, self_kills=0, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=5, team=2, xp=1500, kills=20, damage_given=2000, revives=3, deaths=8, self_kills=0, mu=25.0, sigma=8.333),
+        PlayerPerformance(player_id=6, team=2, xp=1000, kills=10, damage_given=1000, revives=1, deaths=12, self_kills=0, mu=25.0, sigma=8.333),
     ]
 
     # Team 1 wins

@@ -155,6 +155,7 @@ function formatVal(key: SortKey, val: number): string {
 function ScoreTable({
   title, accent, rows,
   sortKey, sortDir, onSort,
+  playerStatuses,
 }: {
   title: string
   accent: string
@@ -162,6 +163,7 @@ function ScoreTable({
   sortKey: SortKey
   sortDir: SortDir
   onSort: (k: SortKey) => void
+  playerStatuses?: Record<string, { label: string; color: string; tooltip: string }[]>
 }) {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
@@ -236,6 +238,19 @@ function ScoreTable({
                     >
                       <QuakeName name={r.name_display} />
                     </Link>
+                    {playerStatuses && playerStatuses[r.player_guid] && (
+                      <div className="flex gap-1.5 ml-2 select-none overflow-x-auto max-w-[200px] no-scrollbar">
+                        {playerStatuses[r.player_guid].map((st, s_idx) => (
+                          <span
+                            key={s_idx}
+                            title={st.tooltip}
+                            className={`px-1.5 py-0.5 text-[9px] font-bold uppercase rounded border ${st.color} whitespace-nowrap`}
+                          >
+                            {st.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   {COLS.map(col => {
                     const val = (r[col.key] || 0) as number
@@ -314,8 +329,90 @@ export function MatchDetail() {
   const r1_alpha_side = round1_alpha_side ?? 1
   const r2_alpha_side = round2_alpha_side ?? 2
 
-  let alphaRows = r1_alpha_side === 1 ? axis : allies
-  let betaRows = r1_alpha_side === 1 ? allies : axis
+  const alphaRowsOverall = r1_alpha_side === 1 ? axis : allies
+  const betaRowsOverall = r1_alpha_side === 1 ? allies : axis
+
+  // Determine roster stability
+  const isStable = (arr1: string[], arr2: string[]) => {
+    if (arr1.length !== arr2.length) return false
+    const s1 = new Set(arr1)
+    return arr2.every(x => s1.has(x))
+  }
+  
+  const r1_players_list = [...(axis_round1 || []), ...(allies_round1 || [])]
+  const r2_players_list = [...(axis_round2 || []), ...(allies_round2 || [])]
+  
+  const alphaR1 = r1_players_list.filter(r => r.team === r1_alpha_side && r.time_played_pct > 5).map(r => r.player_guid)
+  const alphaR2 = r2_players_list.filter(r => r.team === r2_alpha_side && r.time_played_pct > 5).map(r => r.player_guid)
+  const betaR1 = r1_players_list.filter(r => r.team !== r1_alpha_side && r.time_played_pct > 5).map(r => r.player_guid)
+  const betaR2 = r2_players_list.filter(r => r.team !== r2_alpha_side && r.time_played_pct > 5).map(r => r.player_guid)
+  
+  const alphaStable = isStable(alphaR1, alphaR2)
+  const betaStable = isStable(betaR1, betaR2)
+
+  // Calculate player statuses dynamically: who left early, substituted, or swapped teams
+  const playerStatuses: Record<string, { label: string; color: string; tooltip: string }[]> = {}
+  
+  allPlayers.forEach(p => {
+    const guid = p.player_guid
+    const statuses = []
+    
+    // Find their round 1 and round 2 rows
+    const r1Row = r1_players_list.find(r => r.player_guid === guid)
+    const r2Row = r2_players_list.find(r => r.player_guid === guid)
+    
+    const playedR1 = r1Row && r1Row.time_played_pct > 5
+    const playedR2 = r2Row && r2Row.time_played_pct > 5
+    
+    const isAlphaPlayer = alphaRowsOverall.some(r => r.player_guid === guid)
+    const teamStable = isAlphaPlayer ? alphaStable : betaStable
+    
+    if (!teamStable) {
+      if (playedR1 && !playedR2) {
+        statuses.push({
+          label: 'Left after R1',
+          color: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+          tooltip: 'Played Round 1 but did not play Round 2'
+        })
+      } else if (!playedR1 && playedR2) {
+        statuses.push({
+          label: 'R2 Substitute',
+          color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+          tooltip: 'Did not play Round 1, joined as a substitute in Round 2'
+        })
+      }
+      
+      if (r1Row && r1Row.time_played_pct > 5 && r1Row.time_played_pct < 50) {
+        statuses.push({
+          label: `Left Early R1 (${Math.round(r1Row.time_played_pct)}%)`,
+          color: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+          tooltip: `Played only ${Math.round(r1Row.time_played_pct)}% of Round 1`
+        })
+      }
+      if (r2Row && r2Row.time_played_pct > 5 && r2Row.time_played_pct < 50) {
+        statuses.push({
+          label: `Left Early R2 (${Math.round(r2Row.time_played_pct)}%)`,
+          color: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+          tooltip: `Played only ${Math.round(r2Row.time_played_pct)}% of Round 2`
+        })
+      }
+      
+      if (r1Row && r2Row && (r1Row.team === r1_alpha_side) !== (r2Row.team === r2_alpha_side)) {
+        statuses.push({
+          label: 'Swapped Team',
+          color: 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+          tooltip: 'Switched teams between Round 1 and Round 2'
+        })
+      }
+    }
+    
+    if (statuses.length > 0) {
+      playerStatuses[guid] = statuses
+    }
+  })
+
+  let alphaRows = alphaRowsOverall
+  let betaRows = betaRowsOverall
   let alphaSide = r1_alpha_side
   let betaSide = r1_alpha_side === 1 ? 2 : 1
 
@@ -460,11 +557,13 @@ export function MatchDetail() {
           title={`Alpha ${activeTab !== 'total' ? `(${sideLabel(alphaSide)})` : ''}`} 
           accent={activeTab === 'total' ? 'text-white' : sideColor(alphaSide)} 
           rows={alphaRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
+          playerStatuses={playerStatuses}
         />
         <ScoreTable 
           title={`Beta ${activeTab !== 'total' ? `(${sideLabel(betaSide)})` : ''}`} 
           accent={activeTab === 'total' ? 'text-white' : sideColor(betaSide)} 
           rows={betaRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} 
+          playerStatuses={playerStatuses}
         />
       </div>
     </div>

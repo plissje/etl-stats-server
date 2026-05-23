@@ -805,8 +805,58 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
         # Note: headshot_hits/shots_recorded are derived from existing if needed
         # For simplicity, we assume we want to recalculate totals correctly.
 
+    # A) Pre-detect side swap model (engine_swapped) and round durations
+    engine_swapped = False
+    if len(payloads) >= 2:
+        r1_players = payloads[0].get("player_stats") or {}
+        r2_players = payloads[1].get("player_stats") or {}
+        
+        common_guids = set(r1_players.keys()) & set(r2_players.keys())
+        matches_team = 0
+        swapped_team = 0
+        for g in common_guids:
+            t1 = r1_players[g].get("team")
+            t2 = r2_players[g].get("team")
+            if t1 in (1, 2, "1", "2") and t2 in (1, 2, "1", "2"):
+                if int(t1) == int(t2):
+                    matches_team += 1
+                else:
+                    swapped_team += 1
+        
+        if swapped_team > matches_team:
+            engine_swapped = True
+            print(f"DEBUG: Auto-detected side-swap model: Players SWAPPED engine teams between rounds.")
+        else:
+            engine_swapped = False
+            print(f"DEBUG: Auto-detected side-swap model: Players STAYED on the same engine team numbers.")
+
+        # Save the resolved Round 2 Alpha Side based on engine-swap detection
+        r1_alpha = match_row.round1_alpha_side or 1
+        match_row.round2_alpha_side = (3 - r1_alpha) if engine_swapped else r1_alpha
+        db.flush()
+
+    round_durations = {}
+    seen_indices_dur = set()
+    for j, p in enumerate(payloads):
+        r_info = p.get("round_info") or {}
+        r_idx = int(r_info.get("round_index") or r_info.get("round") or (j + 1))
+        while r_idx in seen_indices_dur:
+            r_idx += 1
+        seen_indices_dur.add(r_idx)
+        
+        try:
+            dur = int(r_info.get("round_end_unix") or 0) - int(r_info.get("round_start_unix") or 0)
+        except:
+            dur = 0
+        if dur <= 0:
+            dur = 600 # 10 min default
+        round_durations[r_idx] = dur
+
+    player_round_time_played_pcts = defaultdict(dict)
+
     # 2. PROCESS NEW PAYLOADS
     seen_indices = set()
+
     for i, body in enumerate(payloads):
         round_info = body.get("round_info") or {}
         # Support both 'round_index' (v2 migration) and 'round' (live Lua script)
@@ -877,7 +927,10 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
             # If they join in Round 2, their Engine Team is inverted relative to Round 1.
             effective_team_r1 = team
             if team in (1, 2) and round_index % 2 == 0:
-                effective_team_r1 = 3 - team
+                if engine_swapped:
+                    effective_team_r1 = 3 - team
+                else:
+                    effective_team_r1 = team
 
             if guid not in total_stats_by_guid:
                 total_stats_by_guid[guid] = TotalStat(name_raw, display, team)
@@ -1123,7 +1176,21 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 r_sk = em.self_kills
                 r_tk_rec = em.team_deaths_received
                 r_combat_deaths = max(0, r_total_deaths - r_sk - r_tk_rec)
-                r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
+                # Calculate per-round time_played_pct accurately (solving cumulative percentage delta bug)
+                if round_index == 1 or not p_unpacked:
+                    r_time_played_pct = tpct
+                else:
+                    prev_dur_sum = sum(round_durations[k] for k in round_durations if k < round_index)
+                    curr_dur_sum = prev_dur_sum + round_durations.get(round_index, 600)
+                    prev_seconds = (p_unpacked.time_played_pct / 100.0) * prev_dur_sum
+                    curr_seconds = (tpct / 100.0) * curr_dur_sum
+                    round_seconds = curr_seconds - prev_seconds
+                    r_dur = round_durations.get(round_index, 600)
+                    if round_seconds < 0:
+                        r_time_played_pct = tpct
+                    else:
+                        r_time_played_pct = max(0.0, min(100.0, (round_seconds / r_dur) * 100.0))
+                player_round_time_played_pcts[guid][round_index] = r_time_played_pct
             else:
                 # LEGACY: Cumulative Engine Deltas
                 r_dg = _calc_delta(dg, p_unpacked.damage_given if p_unpacked else 0)
@@ -1144,7 +1211,21 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
                 r_sk = _calc_delta(sk_raw, p_unpacked.self_kills if p_unpacked else 0)
                 r_tk_rec = em.team_deaths_received # Event-based is always a delta
                 r_combat_deaths = max(0, r_total_deaths - r_sk - r_tk_rec)
-                r_time_played_pct = _calc_delta(tpct, p_unpacked.time_played_pct if p_unpacked else 0.0)
+                # Calculate per-round time_played_pct accurately (solving cumulative percentage delta bug)
+                if round_index == 1 or not p_unpacked:
+                    r_time_played_pct = tpct
+                else:
+                    prev_dur_sum = sum(round_durations[k] for k in round_durations if k < round_index)
+                    curr_dur_sum = prev_dur_sum + round_durations.get(round_index, 600)
+                    prev_seconds = (p_unpacked.time_played_pct / 100.0) * prev_dur_sum
+                    curr_seconds = (tpct / 100.0) * curr_dur_sum
+                    round_seconds = curr_seconds - prev_seconds
+                    r_dur = round_durations.get(round_index, 600)
+                    if round_seconds < 0:
+                        r_time_played_pct = tpct
+                    else:
+                        r_time_played_pct = max(0.0, min(100.0, (round_seconds / r_dur) * 100.0))
+                player_round_time_played_pcts[guid][round_index] = r_time_played_pct
             
             p_prev_pdata = getattr(p_unpacked, "pdata_ref", None) if p_unpacked else None
             r_spawn_count = _calc_delta(spawn_count, int(p_prev_pdata.get("spawn_count") or 0) if p_prev_pdata else 0)
@@ -1277,7 +1358,14 @@ def ingest_match_payloads(db: Session, payloads: list[dict[str, Any]], store_raw
     for guid, ts in total_stats_by_guid.items():
         player = player_db_by_guid[guid]
         
-        avg_time = sum(ts.time_played_pcts) / len(ts.time_played_pcts) if ts.time_played_pcts else 0.0
+        # Calculate overall time played percentage correctly (solving cumulative percentage delta bug)
+        total_match_duration = sum(round_durations.values())
+        total_player_seconds = 0.0
+        for r_idx, r_dur in round_durations.items():
+            r_pct = player_round_time_played_pcts[guid].get(r_idx, 0.0)
+            total_player_seconds += (r_pct / 100.0) * r_dur
+        
+        avg_time = (total_player_seconds / total_match_duration * 100.0) if total_match_duration > 0 else 0.0
         eff, kdr = _eff_kdr(ts.kills, ts.deaths)
         u_eff = _calculate_unified_eff(ts.kills, ts.revives, ts.damage_given, ts.xp, ts.deaths, ts.self_kills)
         hs_acc = hs_accuracy(ts.headshot_hits, ts.shots_recorded)
